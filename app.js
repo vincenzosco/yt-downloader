@@ -702,7 +702,53 @@
       card.querySelector('.card-sub').textContent = sub;
       if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
     });
-    /* info in background: durata + disponibilita' */
+    /* pulsanti subito visibili (non dipendono da /info) */
+    var actions = document.createElement('div');
+    actions.className = 'card-actions';
+    card.querySelector('.card-body').appendChild(actions);
+
+    var previewWrap = document.createElement('div');
+    previewWrap.className = 'card-preview';
+    card.appendChild(previewWrap);
+
+    /* anteprima audio */
+    var play = document.createElement('button');
+    play.type = 'button';
+    play.className = 'btn btn-play';
+    play.textContent = '\u25B6';
+    play.setAttribute('aria-label', t('preview-audio'));
+    actions.appendChild(play);
+    play.addEventListener('click', function () {
+      if (previewWrap.innerHTML) {
+        previewWrap.innerHTML = '';
+        play.textContent = '\u25B6';
+        return;
+      }
+      var audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = engine + '/stream?id=' + encodeURIComponent(vid);
+      previewWrap.appendChild(audio);
+      play.textContent = '\u25A0';
+      try { audio.play(); } catch (e) { /* ok */ }
+    });
+
+    /* pulsante Scarica sempre presente (anche se /info fallisse) */
+    var setupDl = function (titleText, authorText) {
+      var dl = actions.querySelector('.btn-dl-main');
+      if (!dl) {
+        dl = document.createElement('button');
+        dl.type = 'button';
+        dl.className = 'btn btn-primary btn-dl-main';
+        actions.appendChild(dl);
+      }
+      var item = { id: vid, title: titleText || '', author: authorText || '' };
+      dl.textContent = t('download');
+      bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status');
+    };
+    setupDl('', '');
+
+    /* info in background: durata + titolo (fallire non blocca il download) */
     callEngine('/info?id=' + encodeURIComponent(vid),
       function (info) {
         var subEl = card.querySelector('.card-sub');
@@ -712,47 +758,10 @@
         if (info.size) bits.push(fmtBytes(info.size));
         if (bits.length) subEl.textContent = bits.join(' \u00B7 ');
         card.querySelector('.card-title').textContent = info.title || card.querySelector('.card-title').textContent;
-        var actions = card.querySelector('.card-actions');
-        if (!actions) {
-          actions = document.createElement('div');
-          actions.className = 'card-actions';
-          card.querySelector('.card-body').appendChild(actions);
-        }
-        actions.innerHTML = '';
-        var item = { id: vid, title: info.title || '', author: info.author || '' };
-        var dl = document.createElement('button');
-        dl.type = 'button';
-        dl.className = 'btn btn-primary';
-        dl.textContent = t('download');
-        actions.appendChild(dl);
-        bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status');
-        var play = document.createElement('button');
-        play.type = 'button';
-        play.className = 'btn btn-play';
-        play.textContent = '\u25B6';
-        play.setAttribute('aria-label', t('preview-audio'));
-        actions.appendChild(play);
-        var previewWrap = document.createElement('div');
-        previewWrap.className = 'card-preview';
-        card.appendChild(previewWrap);
-        play.addEventListener('click', function () {
-          if (previewWrap.innerHTML) {
-            previewWrap.innerHTML = '';
-            play.textContent = '\u25B6';
-            return;
-          }
-          var audio = document.createElement('audio');
-          audio.controls = true;
-          audio.preload = 'none';
-          audio.src = engine + '/stream?id=' + encodeURIComponent(vid);
-          previewWrap.appendChild(audio);
-          play.textContent = '\u25A0';
-          try { audio.play(); } catch (e) { /* ok */ }
-        });
+        var dl = actions.querySelector('.btn-dl-main');
+        bindDownload(card.querySelector('.card-body'), dl, { id: vid, title: info.title || '', author: info.author || '' }, t('download'), 'link-status');
       },
-      function (msg) {
-        setStatus('link-status', tF('info-err', friendlyMsg(msg)), true);
-      });
+      function () { /* ignora: il download usa /formats, non /info */ });
   }
 
   function openPlaylist(list) {
