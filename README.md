@@ -8,21 +8,19 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 ## Come funziona
 
-GitHub Pages (statico) + engine serverless (Cloudflare Worker o Deno Deploy). YouTube blocca le chiamate con header `Origin` (il browser non può chiamare direttamente le API interne). L'engine le chiama lato server, senza `Origin`.
+GitHub Pages (statico) + engine serverless (Cloudflare Worker). YouTube blocca le chiamate con header `Origin` (il browser non può chiamare direttamente le API interne). L'engine le chiama lato server, senza `Origin`.
 
 ```
 browser (pagina statica su GitHub Pages)
    │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
    │  chiamate all'engine (CORS *)
    ▼
-engine: Cloudflare Worker + Deno Deploy (entrambi gratis)
+engine: Cloudflare Worker (gratis, unico account: già usato)
    │  API Innertube lato server, senza Origin, retry su più host/client
+   │  PO token (anti-bot) generato dentro il worker
    ▼
 YouTube → URL audio/video → l'engine lo streama al browser → download
 ```
-
-Il frontend prova automaticamente **entrambi gli engine**: se uno è in
-cooldown anti-bot, passa all'altro (provider e IP diversi).
 
 ### Endpoint dell'engine (`worker/index.js`)
 
@@ -36,24 +34,12 @@ cooldown anti-bot, passa all'altro (provider e IP diversi).
 
 ## Deploy
 
-### Cloudflare Worker
+Servono solo l'account Cloudflare già in uso (unico account per tutto).
 
 ```bash
+cd worker
 npx wrangler login
 npx wrangler deploy
-```
-
-### Deno Deploy
-
-1. Vai su [dash.deno.com](https://dash.deno.com) → New Project → collega il repo GitHub.
-2. Entrypoint: `deno/main.js`.
-3. L'URL sarà `https://yt-downloader-deno.deno.dev` (o simile). Incollalo in `app.js` come `ENGINE_DENO`.
-
-In alternativa via CLI:
-
-```bash
-# installa deployctl (npm)
-npx deployctl deploy --project=yt-downloader-deno --token=$DENO_DEPLOY_TOKEN --entrypoint=deno/main.js
 ```
 
 Test rapido:
@@ -67,9 +53,10 @@ curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
 
 - `index.html`, `style.css`, `app.js` — pagina statica, JavaScript ES5
   volutamente senza framework né build: gira anche su browser datati.
-- `worker/index.js` — logica engine (Web API standard, funziona su Cloudflare
-  Workers e Deno Deploy).
-- `deno/main.js` — entrypoint Deno Deploy (riusa `worker/index.js`).
+- `worker/index.js` — logica engine (Web API standard).
+- `worker/pot.js` — generazione PO token (anti-bot) con `bgutils-js`
+  (dipendenza npm in `worker/package.json`). Genera il token all'avvio del
+  worker e lo rigenera su richiesta se scade.
 
 ### Test locale
 
@@ -77,9 +64,8 @@ curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
 # test del parsing worker (Node.js)
 node worker/test.js
 
-# test engine su Deno (scarica il runtime in /tmp)
-curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/tmp/denobin sh -s v2.0.0
-/tmp/denobin/bin/deno run --allow-net deno/test.js
+# test della generazione PO token (Node.js)
+cd worker && node pot-test.mjs
 ```
 
 ## Note
@@ -87,10 +73,18 @@ curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/tmp/denobin sh -s v2.0.0
 - Solo per contenuti di cui hai i diritti.
 - Gli endpoint Innertube possono cambiare: aggiorna i client in `worker/index.js`
   (`CLIENT_WEB`, `CLIENT_ANDROID`, `CLIENT_IOS`).
-- **Blocchi temporanei**: se l'engine accumula troppe richieste in poco tempo,
-  YouTube può chiedere "Sign in to confirm you're not a bot". È un limite degli
-  IP datacenter e si azzera da solo (pochi minuti/diverse ore). La pagina riprova
-  da sola e passa automaticamente all'altro engine (Cloudflare → Deno e viceversa).
+- **Anti-bot (PO token)**: YouTube chiede "Sign in to confirm you're not a bot"
+  sugli IP dei datacenter. Il worker genera un PO token (Proof of Origin) con
+  `bgutils-js` (`worker/pot.js`): all'avvio del worker esegue la VM BotGuard
+  (via `new Function`, ammesso nei Workers in fase di startup) e ottiene dal
+  servizio WAA un token valido (integrity o websafe-fallback). Il token viene
+  iniettato nelle richieste `/info`, `/formats`, `/stream` e supera il
+  bot-challenge. È un ulteriore strato sopra `visitorData` + retry.
+- **Limite reale**: un uso frequente continuato fa comunque scattare il blocco
+  sull'IP del worker (il PO token non garantisce il 100%). Si azzera da solo in
+  pochi minuti/ore. L'uso normale (qualche canzone) non lo innesca. Per un uso
+  intenso servirebbe un provider aggiuntivo (es. Deno Deploy, che richiede un
+  secondo account) oppure un IP residenziale via proxy.
 - Il download via engine non usa cache sull'URL audio: riusare lo stesso URL
   googlevideo fa scattare il throttling di YouTube.
 
@@ -110,13 +104,10 @@ The page has an IT/EN language toggle (top right). The engine serves both langua
 
 ## How it works
 
-GitHub Pages (static) + serverless engine (Cloudflare Worker or Deno Deploy).
+GitHub Pages (static) + serverless engine (Cloudflare Worker).
 YouTube blocks requests with `Origin` headers that come from the browser.
-The engine makes API calls server-side, without `Origin`.
-
-The frontend automatically tries **both engines** in sequence: if one is
-temporarily blocked (bot-challenge cooldown), it falls back to the other
-(different provider, different IP pool).
+The engine makes API calls server-side, without `Origin`, and generates its
+own anti-bot PO token (`worker/pot.js`) inside the worker.
 
 ### Engine endpoints (`worker/index.js`)
 
@@ -128,43 +119,33 @@ temporarily blocked (bot-challenge cooldown), it falls back to the other
 | `/playlist?list=…` | playlist track list                              |
 | `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
 
-## Duplicate deploying
+## Deploy
 
-### Cloudflare Worker
+Only the Cloudflare account already in use is required (single account).
 
 ```bash
+cd worker
 npx wrangler login
 npx wrangler deploy
-```
-
-Paste the resulting URL in the page footer (**change**) or set `ENGINE_CLOUDFLARE`
-in `app.js`.
-
-### Deno Deploy
-
-1. Go to [dash.deno.com](https://dash.deno.com) → New Project → connect GitHub repo.
-2. Entrypoint: `deno/main.js`.
-3. Paste the resulting URL in `app.js` as `ENGINE_DENO`.
-
-Or via CLI:
-
-```bash
-npx deployctl deploy --project=yt-downloader-deno --token=$DENO_DEPLOY_TOKEN --entrypoint=deno/main.js
 ```
 
 ## Development
 
 - `index.html`, `style.css`, `app.js` — static page, ES5 (no framework, no build).
-- `worker/index.js` — engine logic (standard Web APIs, works on both Cloudflare Workers and Deno Deploy).
-- `deno/main.js` — Deno Deploy entrypoint (reuses `worker/index.js`).
+- `worker/index.js` — engine logic (standard Web APIs).
+- `worker/pot.js` — anti-bot PO token generation (`bgutils-js`).
 
 ## Notes
 
 - Only for content you have rights to.
-- **Temporary blocks**: heavy repeated use from datacenter IPs triggers
-  YouTube's bot-challenge ("Sign in to confirm you're not a bot").
-  Blocks reset on their own (minutes/hours). The page retries automatically
-  and falls back to the other engine. Normal use (a few songs) doesn't trigger them.
+- **Anti-bot (PO token)**: YouTube asks "Sign in to confirm you're not a bot"
+  on datacenter IPs. The worker generates a PO token with `bgutils-js`
+  (`worker/pot.js`) and injects it into `/info`, `/formats`, `/stream` to
+  pass the challenge.
+- **Real limit**: heavy continued use still triggers blocks on the worker IP
+  (PO token is not 100%). It resets on its own in minutes/hours. Normal use
+  (a few songs) is fine. For heavy use you'd need an extra provider or a
+  residential proxy (paid).
 
 ## License
 

@@ -6,7 +6,6 @@
      l'utente puo' cambiarlo dal footer ("cambia"). */
 
   var ENGINE_CLOUDFLARE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
-  var ENGINE_DENO = ''; // deploy Deno Deploy e incolla qui l'URL
   var ENGINE_KEY = 'ytd.engine';
 
   function engineMissingMsg() { return t('engine-missing'); }
@@ -218,7 +217,6 @@
     var custom = storageGet(ENGINE_KEY);
     if (custom) list.push(custom);
     if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
-    if (ENGINE_DENO && ENGINE_DENO.length && list.indexOf(ENGINE_DENO) === -1) list.push(ENGINE_DENO);
     return list;
   }
 

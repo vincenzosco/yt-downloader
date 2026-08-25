@@ -11,6 +11,10 @@
 // non puo' chiamarlo direttamente) e blocca a intermittenza alcuni IP di
 // datacenter. Qui le richieste partono dal server senza Origin, su piu' host e
 // client con retry; per la ricerca c'e' un fallback sulla pagina HTML.
+//
+// Il PO token (bot-challenge) è generato nel worker stesso (worker/pot.js).
+
+import { getPoToken } from './pot.js';
 
 const YT_HOSTS = [
   'https://www.youtube.com/youtubei/v1',
@@ -311,13 +315,17 @@ async function getVisitorData(force) {
 
 
 // esegue fn con ogni client (2 giri, visitorData fresco al secondo) finche'
-// non restituisce un valore; raccoglie anche le risposte parziali
-async function withClients(fn) {
+// non restituisce un valore; raccoglie anche le risposte parziali.
+// Se pot (PO token) è presente, lo inietta nel context del client: è il
+// meccanismo che YouTube usa per i client Web; per ANDROID aiuta a superare
+// il bot-challenge (token generato offline con un client fidato).
+async function withClients(fn, pot) {
   let lastErr = null;
   const results = [];
   for (let round = 0; round < 2; round++) {
     const vd = await getVisitorData(round === 1);
-    const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
+    let clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
+    if (pot) clients = clients.map((c) => ({ ...c, poToken: pot }));
     for (let c = 0; c < clients.length; c++) {
       try {
         const value = await fn(clients[c]);
@@ -332,20 +340,20 @@ async function withClients(fn) {
   return results;
 }
 
-async function getAudioInfo(id) {
+async function getAudioInfo(id, pot) {
   const infos = await withClients(async (client) => {
     const data = await innertube('/player', [client], { videoId: id });
     const info = parsePlayer(data);
     return info.url ? info : null;
-  });
+  }, pot);
   return infos[0];
 }
 
-async function getFormats(id) {
+async function getFormats(id, pot) {
   const parsed = await withClients(async (client) => {
     const data = await innertube('/player', [client], { videoId: id });
     return parsePlayerFormats(data);
-  });
+  }, pot);
   // unisce i formati di tutti i client (dedup per itag, preferisce chi ha size)
   const byItag = {};
   for (let i = 0; i < parsed.length; i++) {
@@ -368,7 +376,7 @@ function sanitizeName(name) {
   return clean || 'audio';
 }
 
-async function streamAudio(id, itag, request) {
+async function streamAudio(id, itag, request, pot) {
   const url = new URL(request.url);
   const base = sanitizeName(url.searchParams.get('name')) || 'download';
 
@@ -388,7 +396,7 @@ async function streamAudio(id, itag, request) {
       return match;
     }
     return null;
-  });
+  }, pot);
 
   const headers = { 'User-Agent': UA_ANDROID };
   const range = request.headers.get('Range');
@@ -423,6 +431,24 @@ function pickAudioFmt(formats) {
 
 const ID_RE = /^[\w-]{6,20}$/;
 
+/* PO token, in ordine:
+   1. parametro ?pot= (override, utile per test)
+   2. variabile d'ambiente POT (generato offline con un client fidato)
+   3. generazione locale nel worker (worker/pot.js): il token supera il
+      bot-challenge sugli IP datacenter (vedi pot.selfhost). */
+async function potFrom(q) {
+  const fromQuery = (q.get('pot') || '').trim().slice(0, 2048);
+  if (fromQuery) return fromQuery;
+  try {
+    const env = (typeof POT !== 'undefined' && POT) || '';
+    if (env) return env;
+  } catch (e) { /* ignora */ }
+  try {
+    return getPoToken();
+  } catch (e) { /* ignora */ }
+  return '';
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -448,12 +474,12 @@ export default {
       if (path === '/info') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        return json(await getAudioInfo(id));
+        return json(await getAudioInfo(id, await potFrom(q)));
       }
       if (path === '/formats') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        const { info, formats } = await getFormats(id);
+        const { info, formats } = await getFormats(id, await potFrom(q));
         // raggruppa per tipo, ordinati per qualita'
         const audio = formats.filter((f) => f.kind === 'audio').sort((a, b) => b.bitrate - a.bitrate);
         const progressive = formats.filter((f) => f.kind === 'progressive').sort((a, b) => b.height - a.height);
@@ -481,7 +507,7 @@ export default {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
         const itag = (q.get('itag') || '').trim();
-        return streamAudio(id, itag || null, request);
+        return streamAudio(id, itag || null, request, await potFrom(q));
       }
       return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/formats', '/playlist', '/stream'] });
     } catch (e) {
