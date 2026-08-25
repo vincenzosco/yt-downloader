@@ -7,15 +7,20 @@
 //   /stream?id=...&name=… → audio (bytes), CORS *, supporta Range
 //   /                     → { ok:true, name, endpoints }
 //
-// Nota: YouTube blocca le chiamate che arrivano con header Origin (quindi il
-// browser non puo' chiamarlo direttamente). Qui le richieste partono dal
-// server, senza Origin, e funzionano.
+// Nota: YouTube blocca le chiamate che arrivano con header Origin (il browser
+// non puo' chiamarlo direttamente) e blocca a intermittenza alcuni IP di
+// datacenter. Qui le richieste partono dal server senza Origin, su piu' host e
+// client con retry; per la ricerca c'e' un fallback sulla pagina HTML.
 
-const YT_API = 'https://www.youtube.com/youtubei/v1';
+const YT_HOSTS = [
+  'https://www.youtube.com/youtubei/v1',
+  'https://youtubei.googleapis.com/youtubei/v1',
+];
 
 const UA_WEB =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const UA_ANDROID = 'com.google.android.youtube/20.14.37 (Linux; U; Android 11) gzip';
+const UA_IOS = 'com.google.ios.youtube/20.14.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X)';
 
 export const CLIENT_WEB = { clientName: 'WEB', clientVersion: '2.20250605.01.00' };
 export const CLIENT_ANDROID = {
@@ -23,35 +28,31 @@ export const CLIENT_ANDROID = {
   clientVersion: '20.14.37',
   androidSdkVersion: 30,
 };
+export const CLIENT_IOS = { clientName: 'IOS', clientVersion: '20.14.4', deviceModel: 'iPhone16,2' };
 
-// Piccola cache in-isolate del player (videoId → url audio), TTL 5 min.
-const playerCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000;
-
-function cacheUrl(id, url) {
-  if (url) playerCache.set(id, { url, at: Date.now() });
-}
-function getCachedUrl(id) {
-  const c = playerCache.get(id);
-  if (!c) return null;
-  if (Date.now() - c.at > CACHE_TTL) {
-    playerCache.delete(id);
-    return null;
+export async function innertube(path, clients, body) {
+  let lastErr = null;
+  for (let h = 0; h < YT_HOSTS.length; h++) {
+    for (let c = 0; c < clients.length; c++) {
+      const client = clients[c];
+      try {
+        const ua = client === CLIENT_ANDROID ? UA_ANDROID : client === CLIENT_IOS ? UA_IOS : UA_WEB;
+        const res = await fetch(YT_HOSTS[h] + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+          body: JSON.stringify({ context: { client }, ...body }),
+        });
+        if (res.status !== 200) {
+          lastErr = new Error('youtube http ' + res.status);
+          continue;
+        }
+        return res.json();
+      } catch (e) {
+        lastErr = e;
+      }
+    }
   }
-  return c.url;
-}
-
-export async function innertube(path, client, body) {
-  const res = await fetch(YT_API + path, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': client === CLIENT_ANDROID ? UA_ANDROID : UA_WEB,
-    },
-    body: JSON.stringify({ context: { client }, ...body }),
-  });
-  if (res.status !== 200) throw new Error('youtube http ' + res.status);
-  return res.json();
+  throw lastErr || new Error('youtube unreachable');
 }
 
 function json(data, status) {
@@ -67,7 +68,6 @@ function json(data, status) {
 
 function pickThumb(thumbs) {
   if (!Array.isArray(thumbs) || !thumbs.length) return '';
-  // preferisce un'immagine 16:9 con larghezza decente
   let best = null;
   let bestScore = -1;
   for (let i = 0; i < thumbs.length; i++) {
@@ -110,7 +110,6 @@ export function parseSearch(data) {
 }
 
 function pickAudio(fmts) {
-  // preferisce m4a (itag 140/139), poi opus (251/250/249), poi 599/600
   const order = [140, 139, 251, 250, 249, 599, 600];
   const byItag = {};
   const list = [];
@@ -175,18 +174,117 @@ export function parsePlaylist(data) {
   return { id: panel.playlistId || '', title: panel.title || '', items };
 }
 
-async function getAudioUrl(id) {
-  const cached = getCachedUrl(id);
-  if (cached) return cached;
-  const data = await innertube('/player', CLIENT_ANDROID, { videoId: id });
-  const info = parsePlayer(data);
-  if (!info.url) {
-    const err = new Error('nessun formato audio disponibile');
-    err.code = 'NO_AUDIO';
-    throw err;
+/* ---------- fallback HTML per la ricerca ---------- */
+
+function extractInitialData(html) {
+  const idx = html.indexOf('ytInitialData');
+  if (idx < 0) return null;
+  const start = html.indexOf('{', idx);
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return JSON.parse(html.slice(start, i + 1));
+    }
   }
-  cacheUrl(id, info.url);
-  return info.url;
+  return null;
+}
+
+async function searchHtmlFallback(query) {
+  const res = await fetch('https://www.youtube.com/results?search_query=' + encodeURIComponent(query), {
+    headers: { 'User-Agent': UA_WEB },
+  });
+  if (!res.ok) throw new Error('search html http ' + res.status);
+  const html = await res.text();
+  const data = extractInitialData(html);
+  if (!data) throw new Error('search html: ytInitialData non trovato');
+  return parseSearch(data);
+}
+
+async function doSearch(query) {
+  try {
+    const data = await innertube('/search', [CLIENT_WEB], { query });
+    const results = parseSearch(data);
+    if (results.length) return results;
+    // risposta vuota (es. bot-challenge): ripiega sulla pagina HTML
+  } catch (e) {
+    /* ripiega sulla pagina HTML */
+  }
+  return searchHtmlFallback(query);
+}
+
+/* ---------- audio ---------- */
+
+const CLIENTS_PLAYER = [CLIENT_ANDROID, CLIENT_IOS];
+
+// visitorData fresco dalle pagine HTML (non challenge): aiuta a superare
+// i bot-challenge intermittenti di YouTube sugli IP di datacenter.
+let vdCache = null;
+let vdAt = 0;
+async function getVisitorData() {
+  if (vdCache && Date.now() - vdAt < 10 * 60 * 1000) return vdCache;
+  try {
+    const res = await fetch('https://www.youtube.com/results?search_query=youtube', {
+      headers: { 'User-Agent': UA_WEB },
+    });
+    if (!res.ok) return vdCache || null;
+    const html = await res.text();
+    const m = html.match(/"visitorData":"([^"]+)"/);
+    vdCache = m ? m[1] : (vdCache || null);
+    vdAt = Date.now();
+  } catch (e) {
+    /* usa l'ultimo visitorData se presente */
+  }
+  return vdCache;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// retry con backoff: i bot-challenge di YouTube sono spesso transitori
+async function withRetry(fn, attempts) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      await sleep(300 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
+async function getAudioInfo(id) {
+  const vd = await getVisitorData();
+  const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
+  let lastErr = null;
+  for (let c = 0; c < clients.length; c++) {
+    try {
+      const data = await withRetry(() => innertube('/player', [clients[c]], { videoId: id }), 2);
+      const info = parsePlayer(data);
+      if (!info.url) {
+        const err = new Error('nessun formato audio disponibile');
+        err.code = 'NO_AUDIO';
+        throw err;
+      }
+      return info;
+    } catch (e) {
+      lastErr = e; // playability errata o http: prova il client successivo
+    }
+  }
+  throw lastErr || new Error('nessun audio disponibile');
 }
 
 function sanitizeName(name) {
@@ -201,11 +299,11 @@ function sanitizeName(name) {
 async function streamAudio(id, request) {
   const url = new URL(request.url);
   const name = sanitizeName(url.searchParams.get('name')) + '.m4a';
-  const audioUrl = await getAudioUrl(id);
+  const info = await getAudioInfo(id);
   const headers = { 'User-Agent': UA_ANDROID };
   const range = request.headers.get('Range');
   if (range) headers['Range'] = range;
-  const res = await fetch(audioUrl, { headers });
+  const res = await fetch(info.url, { headers });
   if (!res.ok && res.status !== 206) throw new Error('stream http ' + res.status);
   const out = new Response(res.body, res);
   out.headers.set('Access-Control-Allow-Origin', '*');
@@ -235,21 +333,17 @@ export default {
       if (path === '/search') {
         const query = (q.get('q') || '').trim().slice(0, 100);
         if (!query) return json({ error: 'missing', message: 'parametro q mancante' }, 400);
-        const data = await innertube('/search', CLIENT_WEB, { query });
-        return json({ query, results: parseSearch(data) });
+        return json({ query, results: await doSearch(query) });
       }
       if (path === '/info') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        const data = await innertube('/player', CLIENT_ANDROID, { videoId: id });
-        const info = parsePlayer(data);
-        cacheUrl(id, info.url);
-        return json(info);
+        return json(await getAudioInfo(id));
       }
       if (path === '/playlist') {
         const list = (q.get('list') || '').trim().slice(0, 60);
         if (!list) return json({ error: 'missing', message: 'parametro list mancante' }, 400);
-        const data = await innertube('/next', CLIENT_WEB, { playlistId: list });
+        const data = await innertube('/next', [CLIENT_WEB], { playlistId: list });
         const pl = parsePlaylist(data);
         if (!pl) return json({ error: 'not found', message: 'playlist non trovata' }, 404);
         return json(pl);
