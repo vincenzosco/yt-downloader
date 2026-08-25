@@ -381,10 +381,10 @@
 
     var meta = document.createElement('div');
     meta.className = 'meta';
-    var t = document.createElement('div');
-    t.className = 't-title';
-    t.textContent = item.title || '';
-    meta.appendChild(t);
+    var titleEl = document.createElement('div');
+    titleEl.className = 't-title';
+    titleEl.textContent = item.title || '';
+    meta.appendChild(titleEl);
     var sub = document.createElement('div');
     sub.className = 't-sub';
     var bits = [];
@@ -639,10 +639,10 @@
     card.appendChild(img);
     var body = document.createElement('div');
     body.className = 'card-body';
-    var t = document.createElement('div');
-    t.className = 'card-title';
-    t.textContent = title || '';
-    body.appendChild(t);
+    var titleEl = document.createElement('div');
+    titleEl.className = 'card-title';
+    titleEl.textContent = title || '';
+    body.appendChild(titleEl);
     var s = document.createElement('div');
     s.className = 'card-sub';
     s.textContent = sub || '';
