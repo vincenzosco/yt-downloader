@@ -233,8 +233,8 @@ const CLIENTS_PLAYER = [CLIENT_ANDROID, CLIENT_IOS];
 // i bot-challenge intermittenti di YouTube sugli IP di datacenter.
 let vdCache = null;
 let vdAt = 0;
-async function getVisitorData() {
-  if (vdCache && Date.now() - vdAt < 10 * 60 * 1000) return vdCache;
+async function getVisitorData(force) {
+  if (!force && vdCache && Date.now() - vdAt < 2 * 60 * 1000) return vdCache;
   try {
     const res = await fetch('https://www.youtube.com/results?search_query=youtube', {
       headers: { 'User-Agent': UA_WEB },
@@ -250,38 +250,26 @@ async function getVisitorData() {
   return vdCache;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// retry con backoff: i bot-challenge di YouTube sono spesso transitori
-async function withRetry(fn, attempts) {
-  let lastErr = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      await sleep(300 * (i + 1));
-    }
-  }
-  throw lastErr;
-}
 
 async function getAudioInfo(id) {
-  const vd = await getVisitorData();
-  const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
   let lastErr = null;
-  for (let c = 0; c < clients.length; c++) {
-    try {
-      const data = await withRetry(() => innertube('/player', [clients[c]], { videoId: id }), 2);
-      const info = parsePlayer(data);
-      if (!info.url) {
-        const err = new Error('nessun formato audio disponibile');
-        err.code = 'NO_AUDIO';
-        throw err;
+  // fino a 2 giri completi; al secondo, visitorData forzato fresco
+  for (let round = 0; round < 2; round++) {
+    const vd = await getVisitorData(round === 1);
+    const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
+    for (let c = 0; c < clients.length; c++) {
+      try {
+        const data = await innertube('/player', [clients[c]], { videoId: id });
+        const info = parsePlayer(data);
+        if (!info.url) {
+          const err = new Error('nessun formato audio disponibile');
+          err.code = 'NO_AUDIO';
+          throw err;
+        }
+        return info;
+      } catch (e) {
+        lastErr = e; // playability errata o http: prova il client successivo
       }
-      return info;
-    } catch (e) {
-      lastErr = e; // playability errata o http: prova il client successivo
     }
   }
   throw lastErr || new Error('nessun audio disponibile');
