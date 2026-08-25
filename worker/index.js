@@ -148,6 +148,65 @@ export function parsePlayer(data) {
   };
 }
 
+// elenca tutti i formati scaricabili (progressive = video+audio, video-only,
+// audio-only). Usato da /formats e da /stream quando si sceglie l'itag.
+export function parsePlayerFormats(data) {
+  const vd = (data && data.videoDetails) || {};
+  const play = (data && data.playabilityStatus) || {};
+  if (play.status && play.status !== 'OK') {
+    const err = new Error(play.reason || play.status);
+    err.code = play.status;
+    throw err;
+  }
+  const sd = (data && data.streamingData) || {};
+  const formats = [];
+  const push = (f, kind) => {
+    if (!f || !f.url) return;
+    const bitrate = f.bitrate || 0;
+    const height = f.height || 0;
+    const isWebm = /webm/.test(f.mimeType || '');
+    let label = null;
+    if (kind === 'audio') {
+      // es. "128 kbps AAC" / "opus 160 kbps"
+      const codec = isWebm ? 'Opus' : 'AAC';
+      label = Math.round(bitrate / 1000) + ' kbps ' + codec;
+    } else if (kind === 'video') {
+      label = (f.qualityLabel || (height ? height + 'p' : '')) + ' (solo video)';
+    } else {
+      label = (f.qualityLabel || (height ? height + 'p' : '')) + ' (video + audio)';
+    }
+    formats.push({
+      itag: f.itag,
+      url: f.url,
+      mime: (f.mimeType || '').split(';')[0],
+      label,
+      bitrate,
+      height,
+      size: parseInt(f.contentLength, 10) || 0,
+      kind,
+    });
+  };
+  (sd.formats || []).forEach((f) => push(f, 'progressive'));
+  (sd.adaptiveFormats || []).forEach((f) => push(f, f.audioChannels ? 'audio' : 'video'));
+  return {
+    id: vd.videoId || '',
+    title: vd.title || '',
+    author: vd.author || '',
+    seconds: parseInt(vd.lengthSeconds, 10) || 0,
+    thumb: pickThumb(vd.thumbnail && vd.thumbnail.thumbnails),
+    formats,
+  };
+}
+
+/* estensione file in base al mime (per il Content-Disposition) */
+function extForMime(mime) {
+  if (/webm/.test(mime || '')) return 'webm';
+  if (/mp4/.test(mime || '')) return 'mp4';
+  if (/m4a|aac|mp4a|audio/.test(mime || '')) return 'm4a';
+  if (/ogg|opus/.test(mime || '')) return 'ogg';
+  return 'bin';
+}
+
 export function parsePlaylist(data) {
   const watch = data && data.contents && data.contents.twoColumnWatchNextResults;
   const panel = watch && watch.playlist && watch.playlist.playlist;
@@ -251,28 +310,53 @@ async function getVisitorData(force) {
 }
 
 
-async function getAudioInfo(id) {
+// esegue fn con ogni client (2 giri, visitorData fresco al secondo) finche'
+// non restituisce un valore; raccoglie anche le risposte parziali
+async function withClients(fn) {
   let lastErr = null;
-  // fino a 2 giri completi; al secondo, visitorData forzato fresco
+  const results = [];
   for (let round = 0; round < 2; round++) {
     const vd = await getVisitorData(round === 1);
     const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
     for (let c = 0; c < clients.length; c++) {
       try {
-        const data = await innertube('/player', [clients[c]], { videoId: id });
-        const info = parsePlayer(data);
-        if (!info.url) {
-          const err = new Error('nessun formato audio disponibile');
-          err.code = 'NO_AUDIO';
-          throw err;
-        }
-        return info;
+        const value = await fn(clients[c]);
+        if (value) results.push(value);
       } catch (e) {
         lastErr = e; // playability errata o http: prova il client successivo
       }
     }
+    if (results.length) break;
   }
-  throw lastErr || new Error('nessun audio disponibile');
+  if (!results.length) throw lastErr || new Error('nessun formato disponibile');
+  return results;
+}
+
+async function getAudioInfo(id) {
+  const infos = await withClients(async (client) => {
+    const data = await innertube('/player', [client], { videoId: id });
+    const info = parsePlayer(data);
+    return info.url ? info : null;
+  });
+  return infos[0];
+}
+
+async function getFormats(id) {
+  const parsed = await withClients(async (client) => {
+    const data = await innertube('/player', [client], { videoId: id });
+    return parsePlayerFormats(data);
+  });
+  // unisce i formati di tutti i client (dedup per itag, preferisce chi ha size)
+  const byItag = {};
+  for (let i = 0; i < parsed.length; i++) {
+    for (let j = 0; j < parsed[i].formats.length; j++) {
+      const f = parsed[i].formats[j];
+      const prev = byItag[f.itag];
+      if (!prev || (f.size && !prev.size)) byItag[f.itag] = f;
+    }
+  }
+  const formats = Object.keys(byItag).map((k) => byItag[k]);
+  return { info: parsed[0], formats };
 }
 
 function sanitizeName(name) {
@@ -284,28 +368,27 @@ function sanitizeName(name) {
   return clean || 'audio';
 }
 
-async function streamAudio(id, request) {
+async function streamAudio(id, itag, request) {
   const url = new URL(request.url);
-  const name = sanitizeName(url.searchParams.get('name')) + '.m4a';
+  const base = sanitizeName(url.searchParams.get('name')) || 'download';
 
-  // raccoglie gli URL audio da tutti i client (2 giri, visitorData fresco
-  // al secondo) e prova ciascuno: se uno solo passa, il download funziona
+  // raccoglie gli URL del formato richiesto da tutti i client e prova
+  // ciascuno: se uno solo passa, il download funziona
   const candidates = [];
+  let mime = '';
   let lastErr = null;
-  for (let round = 0; round < 2 && !candidates.length; round++) {
-    const vd = await getVisitorData(round === 1);
-    const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
-    for (let c = 0; c < clients.length; c++) {
-      try {
-        const data = await innertube('/player', [clients[c]], { videoId: id });
-        const info = parsePlayer(data);
-        if (info.url) candidates.push(info.url);
-      } catch (e) {
-        lastErr = e;
-      }
+  await withClients(async (client) => {
+    const data = await innertube('/player', [client], { videoId: id });
+    const parsed = parsePlayerFormats(data);
+    const all = parsed.formats;
+    const match = itag ? all.find((f) => String(f.itag) === String(itag)) : pickAudioFmt(all);
+    if (match && match.url) {
+      if (!mime) mime = match.mime;
+      candidates.push(match.url);
+      return match;
     }
-  }
-  if (!candidates.length) throw lastErr || new Error('nessun audio disponibile');
+    return null;
+  });
 
   const headers = { 'User-Agent': UA_ANDROID };
   const range = request.headers.get('Range');
@@ -316,7 +399,7 @@ async function streamAudio(id, request) {
       if (res.ok || res.status === 206) {
         const out = new Response(res.body, res);
         out.headers.set('Access-Control-Allow-Origin', '*');
-        out.headers.set('Content-Disposition', "attachment; filename=\"" + name + '"');
+        out.headers.set('Content-Disposition', 'attachment; filename="' + base + '.' + extForMime(mime) + '"');
         return out;
       }
       lastErr = new Error('stream http ' + res.status);
@@ -324,7 +407,18 @@ async function streamAudio(id, request) {
       lastErr = e;
     }
   }
-  throw lastErr || new Error('stream non riuscito');
+  const err = new Error(lastErr && lastErr.message ? lastErr.message : 'stream non riuscito');
+  err.code = lastErr && lastErr.code ? lastErr.code : 'STREAM_FAILED';
+  throw err;
+}
+
+function pickAudioFmt(formats) {
+  const order = [140, 139, 251, 250, 249, 599, 600];
+  for (let i = 0; i < order.length; i++) {
+    const f = formats.find((x) => x.itag === order[i] && x.kind === 'audio');
+    if (f) return f;
+  }
+  return formats.find((x) => x.kind === 'audio') || null;
 }
 
 const ID_RE = /^[\w-]{6,20}$/;
@@ -356,6 +450,25 @@ export default {
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
         return json(await getAudioInfo(id));
       }
+      if (path === '/formats') {
+        const id = (q.get('id') || '').trim();
+        if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
+        const { info, formats } = await getFormats(id);
+        // raggruppa per tipo, ordinati per qualita'
+        const audio = formats.filter((f) => f.kind === 'audio').sort((a, b) => b.bitrate - a.bitrate);
+        const progressive = formats.filter((f) => f.kind === 'progressive').sort((a, b) => b.height - a.height);
+        const video = formats.filter((f) => f.kind === 'video').sort((a, b) => b.height - a.height);
+        return json({
+          id: info.id,
+          title: info.title,
+          author: info.author,
+          seconds: info.seconds,
+          thumb: info.thumb,
+          audio,
+          progressive,
+          video,
+        });
+      }
       if (path === '/playlist') {
         const list = (q.get('list') || '').trim().slice(0, 60);
         if (!list) return json({ error: 'missing', message: 'parametro list mancante' }, 400);
@@ -367,9 +480,10 @@ export default {
       if (path === '/stream') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        return streamAudio(id, request);
+        const itag = (q.get('itag') || '').trim();
+        return streamAudio(id, itag || null, request);
       }
-      return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/playlist', '/stream'] });
+      return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/formats', '/playlist', '/stream'] });
     } catch (e) {
       return json({ error: e.code || 'internal', message: e.message || 'errore interno' }, e.code ? 422 : 500);
     }

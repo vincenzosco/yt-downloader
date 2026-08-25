@@ -41,6 +41,14 @@
     return (n / 1048576).toFixed(1) + ' MB';
   }
 
+  function extForMime(mime) {
+    mime = String(mime || '');
+    if (mime.indexOf('webm') !== -1) return 'webm';
+    if (mime.indexOf('mp4') !== -1) return 'mp4';
+    if (mime.indexOf('ogg') !== -1 || mime.indexOf('opus') !== -1) return 'ogg';
+    return 'm4a';
+  }
+
   function storageGet(key) {
     try { return window.localStorage.getItem(key); } catch (e) { return null; }
   }
@@ -85,6 +93,10 @@
     }
     if (/403|429|400/.test(s)) return 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.';
     return s;
+  }
+
+  function fetchFormats(id, ok, err) {
+    xhrJson(engineUrl() + '/formats?id=' + encodeURIComponent(id), ok, err);
   }
 
   function xhrBlob(url, ok, err, onProgress) {
@@ -195,7 +207,7 @@
     li.appendChild(meta);
 
     bindPlay(playBtn, li, item);
-    bindDownload(dlBtn, item, 'Scarica', statusId);
+    bindDownload(li, dlBtn, item, 'Scarica', statusId);
 
     return li;
   }
@@ -221,24 +233,110 @@
     });
   }
 
-  function bindDownload(btn, item, label, statusId) {
+  /* "Scarica" apre un picker (audio/video, qualita') e poi avvia il download */
+  function bindDownload(container, btn, item, label, statusId) {
     btn.addEventListener('click', function () {
       if (btn.getAttribute('data-busy') === '1') return;
       btn.setAttribute('data-busy', '1');
       btn.textContent = '…';
-      fetchAudio(item,
-        function (loaded, total) { btn.textContent = Math.round(loaded / total * 100) + '%'; },
-        function (blob, name) {
-          saveBlob(blob, name, statusId);
-          btn.textContent = 'salvato';
-          reset();
+      fetchFormats(item.id,
+        function (fmts) {
+          btn.removeAttribute('data-busy');
+          btn.textContent = label;
+          buildPicker(container, item, fmts, label, statusId);
         },
         function (msg) {
+          btn.removeAttribute('data-busy');
           btn.textContent = 'errore';
-          setStatus(statusId || 'search-status', 'Download: ' + msg, true);
-          reset();
+          setStatus(statusId || 'search-status', 'formati: ' + friendlyMsg(msg), true);
+          setTimeout(function () { btn.textContent = label; }, 2200);
         });
     });
+  }
+
+  /* costruisce il selettore qualità inline (audio / video) */
+  function buildPicker(container, item, fmts, label, statusId) {
+    var old = container.querySelector('.picker');
+    if (old) container.removeChild(old);
+
+    var picker = document.createElement('div');
+    picker.className = 'picker';
+
+    var sel = document.createElement('select');
+    sel.className = 'picker-select';
+    sel.setAttribute('aria-label', 'Qualità');
+
+    function addGroup(title, list) {
+      if (!list || !list.length) return;
+      var g = document.createElement('optgroup');
+      g.label = title;
+      for (var i = 0; i < list.length; i++) {
+        var o = document.createElement('option');
+        o.value = String(list[i].itag);
+        o.textContent = list[i].label + (list[i].size ? ' · ' + fmtBytes(list[i].size) : '');
+        o.setAttribute('data-mime', list[i].mime || '');
+        g.appendChild(o);
+      }
+      sel.appendChild(g);
+    }
+    addGroup('Audio', fmts.audio);
+    addGroup('Video (con audio)', fmts.progressive);
+    addGroup('Video (solo video)', fmts.video);
+
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-dl';
+    go.textContent = 'Scarica';
+
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn';
+    cancel.textContent = '✕';
+    cancel.setAttribute('aria-label', 'Annulla');
+
+    picker.appendChild(sel);
+    picker.appendChild(go);
+    picker.appendChild(cancel);
+    container.appendChild(picker);
+
+    function close() { if (picker.parentNode) picker.parentNode.removeChild(picker); }
+    cancel.addEventListener('click', close);
+
+    go.addEventListener('click', function () {
+      var opt = sel.options[sel.selectedIndex];
+      var itag = opt.value;
+      var ext = extForMime(opt.getAttribute('data-mime') || '');
+      close();
+      startDownload(item, itag, ext, go, label, statusId);
+    });
+  }
+
+  /* avvia il download di un singolo formato (itag) */
+  function startDownload(item, itag, ext, btn, label, statusId) {
+    var engine = engineUrl();
+    var title = item.title || item.id;
+    var url = engine + '/stream?id=' + encodeURIComponent(item.id) +
+      '&itag=' + encodeURIComponent(itag) +
+      '&name=' + encodeURIComponent(title);
+    btn.setAttribute('data-busy', '1');
+    btn.textContent = '…';
+    retryCall(
+      function (ok, err) {
+        xhrBlob(url, ok, err, function (loaded, total) {
+          if (total) btn.textContent = Math.round(loaded / total * 100) + '%';
+        });
+      },
+      function (blob) {
+        saveBlob(blob, sanitizeTitle(title) + '.' + ext, statusId);
+        btn.textContent = 'salvato';
+        reset();
+      },
+      function (msg) {
+        btn.textContent = 'errore';
+        setStatus(statusId || 'search-status', 'Download: ' + friendlyMsg(msg), true);
+        reset();
+      },
+      3, 1500);
     function reset() {
       setTimeout(function () {
         btn.removeAttribute('data-busy');
@@ -274,16 +372,16 @@
     })();
   }
 
-  /* Download diretto: una sola chiamata all'engine (lo stream restituisce
-     l'audio m4a preferito). Il titolo arriva dai risultati di ricerca o
-     dalla playlist, quindi non serve la chiamata /info. */
-  function fetchAudio(item, onProgress, onDone, onErr) {
+  /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
+  function fetchAudio(item, itag, ext, onProgress, onDone, onErr) {
     var engine = engineUrl();
     var title = item.title || item.id;
-    var url = engine + '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(title);
+    var url = engine + '/stream?id=' + encodeURIComponent(item.id) +
+      (itag ? '&itag=' + encodeURIComponent(itag) : '') +
+      '&name=' + encodeURIComponent(title);
     retryCall(
       function (ok, err) { xhrBlob(url, ok, err, onProgress); },
-      function (blob) { onDone(blob, sanitizeTitle(title) + '.m4a'); },
+      function (blob) { onDone(blob, sanitizeTitle(title) + '.' + (ext || 'm4a')); },
       function (msg) { onErr(friendlyMsg(msg)); },
       3, 1500);
   }
@@ -429,9 +527,9 @@
         var dl = document.createElement('button');
         dl.type = 'button';
         dl.className = 'btn btn-primary';
-        dl.textContent = 'Scarica audio';
+        dl.textContent = 'Scarica';
         actions.appendChild(dl);
-        bindDownload(dl, item, 'Scarica audio', 'link-status');
+        bindDownload(card.querySelector('.card-body'), dl, item, 'Scarica', 'link-status');
         var play = document.createElement('button');
         play.type = 'button';
         play.className = 'btn btn-play';
@@ -487,13 +585,29 @@
         subEl.textContent = bits.join(' \u00B7 ');
         var actions = document.createElement('div');
         actions.className = 'card-actions';
+        var qsel = document.createElement('select');
+        qsel.className = 'picker-select';
+        qsel.setAttribute('aria-label', 'Qualità audio');
+        var qopts = [
+          ['140', 'm4a', 'Audio AAC (consigliato)'],
+          ['251', 'webm', 'Audio Opus (migliore)'],
+          ['139', 'm4a', 'Audio leggero']
+        ];
+        for (var qi = 0; qi < qopts.length; qi++) {
+          var qo = document.createElement('option');
+          qo.value = qopts[qi][0];
+          qo.setAttribute('data-ext', qopts[qi][1]);
+          qo.textContent = qopts[qi][2];
+          qsel.appendChild(qo);
+        }
         var all = document.createElement('button');
         all.type = 'button';
         all.className = 'btn btn-primary';
         all.textContent = 'Scarica tutte';
+        actions.appendChild(qsel);
         actions.appendChild(all);
         card.querySelector('.card-body').appendChild(actions);
-        downloadAll(all, data.items);
+        downloadAll(all, data.items, qsel);
 
         var listEl = $('link-tracks');
         for (var i = 0; i < data.items.length; i++) listEl.appendChild(buildRow(data.items[i], 'link-status'));
@@ -501,11 +615,17 @@
       function (msg) { setStatus('link-status', 'playlist: ' + friendlyMsg(msg), true); });
   }
 
-  function downloadAll(btn, items) {
+  function downloadAll(btn, items, qsel) {
     var busy = false;
     btn.addEventListener('click', function () {
       if (busy) return;
       busy = true;
+      var itag = null, ext = 'm4a';
+      if (qsel) {
+        var opt = qsel.options[qsel.selectedIndex];
+        itag = opt.value;
+        ext = opt.getAttribute('data-ext') || 'm4a';
+      }
       btn.textContent = '0/' + items.length;
       var i = 0;
       (function next() {
@@ -516,7 +636,7 @@
         }
         var item = items[i];
         btn.textContent = (i + 1) + '/' + items.length;
-        fetchAudio(item, null,
+        fetchAudio(item, itag, ext, null,
           function (blob, name) { saveBlob(blob, name); i++; next(); },
           function () { i++; next(); });
       })();

@@ -146,6 +146,24 @@ a:hover { color: #e00000; }
 .preview { margin: 12px 0 0 144px; }
 .preview audio { width: 100%; }
 
+/* ---------- picker qualità ---------- */
+
+.picker { margin: 12px 0 0; clear: both; }
+.picker-select {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #141414;
+  border-radius: 0;
+  background: #fff;
+  color: #141414;
+  padding: 6px 8px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.picker .btn { margin-left: 6px; vertical-align: middle; }
+.row > .picker { margin-left: 144px; }
+.card .picker { margin-left: 0; margin-top: 14px; }
+
 /* ---------- card (link incollato) ---------- */
 
 .card {
@@ -185,6 +203,7 @@ a:hover { color: #e00000; }
 @media (max-width: 560px) {
   .row .thumb { width: 96px; margin-right: 12px; }
   .preview { margin-left: 108px; }
+  .row > .picker { margin-left: 0; }
   .card .card-cover { width: 140px; margin-right: 14px; }
   .row .actions { float: none; margin: 10px 0 0 108px; }
   .row .meta { padding-right: 0; }
