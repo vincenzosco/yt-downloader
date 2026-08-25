@@ -201,8 +201,8 @@ export function parsePlayerFormats(data) {
 /* estensione file in base al mime (per il Content-Disposition) */
 function extForMime(mime) {
   if (/webm/.test(mime || '')) return 'webm';
-  if (/mp4/.test(mime || '')) return 'mp4';
-  if (/m4a|aac|mp4a|audio/.test(mime || '')) return 'm4a';
+  if (/audio\/mp4|m4a|aac|mp4a/.test(mime || '')) return 'm4a';
+  if (/video\/mp4|mp4/.test(mime || '')) return 'mp4';
   if (/ogg|opus/.test(mime || '')) return 'ogg';
   return 'bin';
 }

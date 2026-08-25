@@ -44,7 +44,8 @@
   function extForMime(mime) {
     mime = String(mime || '');
     if (mime.indexOf('webm') !== -1) return 'webm';
-    if (mime.indexOf('mp4') !== -1) return 'mp4';
+    if (mime.indexOf('audio/mp4') !== -1 || mime.indexOf('m4a') !== -1 || mime.indexOf('aac') !== -1 || mime.indexOf('mp4a') !== -1) return 'm4a';
+    if (mime.indexOf('video/mp4') !== -1 || mime.indexOf('mp4') !== -1) return 'mp4';
     if (mime.indexOf('ogg') !== -1 || mime.indexOf('opus') !== -1) return 'ogg';
     return 'm4a';
   }
