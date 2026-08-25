@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytd. — download audio da YouTube</title>
+<meta name="description" content="Cerca una canzone su YouTube oppure incolla un link (video o playlist): anteprima di titolo e copertina, download dell'audio.">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <h1 class="wordmark">ytd<span class="dot">.</span></h1>
+    <p class="tagline">download audio da youtube — cerca una canzone oppure incolla un link</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab is-active" data-tab="search" role="tab">Cerca</button>
+    <button type="button" class="tab" data-tab="link" role="tab">Incolla link</button>
+  </nav>
+
+  <section id="panel-search" class="panel">
+    <form id="search-form" class="form" autocomplete="off">
+      <input id="search-input" type="text" placeholder="artista o titolo…" aria-label="Cerca su YouTube">
+      <button type="submit" class="btn btn-primary">Cerca</button>
+    </form>
+    <p class="status" id="search-status" hidden></p>
+    <ol class="results" id="search-results"></ol>
+  </section>
+
+  <section id="panel-link" class="panel" hidden>
+    <form id="link-form" class="form" autocomplete="off">
+      <input id="link-input" type="text" placeholder="https://www.youtube.com/watch?v=… o playlist…" aria-label="Link di YouTube">
+      <button type="submit" class="btn btn-primary">Anteprima</button>
+    </form>
+    <p class="status" id="link-status" hidden></p>
+    <div id="link-preview"></div>
+    <ol class="results" id="link-tracks"></ol>
+  </section>
+
+  <noscript>
+    <p class="status">Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).</p>
+  </noscript>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="foot-line">engine: <span class="mono" id="engine-url">non configurato</span>
+      <button type="button" class="linklike" id="engine-change">cambia</button></p>
+    <p class="foot-line"><a href="https://github.com/vincenzosco/yt-downloader" target="_blank" rel="noopener">github.com/vincenzosco/yt-downloader</a>
+      — solo per contenuti di cui hai i diritti.</p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "Engine del downloader (Cloudflare Worker). Test: node worker/test.js"
+}
