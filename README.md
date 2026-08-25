@@ -6,6 +6,19 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 [English version below ↓](#english)
 
+## Funzioni
+
+- **Cerca** — risultati con copertina, titolo, autore, durata e anteprima audio (▶).
+- **Incolla link** — video o playlist: card con titolo e copertina, elenco tracce.
+- **Selettore qualità** — su ogni pulsante “Scarica”: scegli formato e qualità tra
+  Audio (AAC/Opus con bitrate), Video con audio (360p progressivo) e Video solo
+  video (720p–1080p+). Ogni opzione mostra la dimensione stimata.
+- **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce, con qualità audio
+  scelta (AAC consigliato / Opus migliore / leggero).
+- **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
+- **Anti-bot** — l'engine genera via token PO e ritenta da solo se YouTube
+  chiede “sign in to confirm you're not a bot” (vedi Note).
+
 ## Come funziona
 
 GitHub Pages (statico) + engine serverless (Cloudflare Worker). YouTube blocca le chiamate con header `Origin` (il browser non può chiamare direttamente le API interne). L'engine le chiama lato server, senza `Origin`.
@@ -87,6 +100,10 @@ cd worker && node pot-test.mjs
   secondo account) oppure un IP residenziale via proxy.
 - Il download via engine non usa cache sull'URL audio: riusare lo stesso URL
   googlevideo fa scattare il throttling di YouTube.
+- **Browser datati**: la pagina è JavaScript ES5 puro (niente `let`/arrow/fetch,
+  niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in su
+  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con `<audio>`).
+  Il selettore qualità usa `<select>`+`optgroup`, supportato da sempre.
 
 <hr>
 
@@ -100,7 +117,20 @@ paste a link (video or playlist): preview title & cover, download audio.
 
 Published at [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
-The page has an IT/EN language toggle (top right). The engine serves both languages, but the page UI is available in both via the toggle.
+The page UI is bilingual (IT/EN toggle, top right).
+
+## Features
+
+- **Search** — results with thumbnail, title, author, duration and audio preview (▶).
+- **Paste link** — video or playlist: card with title & cover, track list.
+- **Quality picker** — every “Download” button lets you choose format/quality:
+  Audio (AAC/Opus with bitrate), Video with audio (360p progressive) and
+  Video only (720p–1080p+). Estimated size shown on every option.
+- **Playlist “Download all”** — downloads every track in sequence, with your
+  chosen audio quality (AAC recommended / Opus best / light).
+- **IT/EN language** — toggle at the top right (choice is remembered).
+- **Anti-bot** — the engine generates a PO token and retries on its own if
+  YouTube asks “sign in to confirm you're not a bot” (see Notes).
 
 ## How it works
 
@@ -146,6 +176,10 @@ npx wrangler deploy
   (PO token is not 100%). It resets on its own in minutes/hours. Normal use
   (a few songs) is fine. For heavy use you'd need an extra provider or a
   residential proxy (paid).
+- **Older browsers**: the page is plain ES5 JavaScript (no `let`/arrow/fetch,
+  no build) and uses `<audio>` for preview: works roughly from 2015 onwards
+  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 with `<audio>`).
+  The quality picker uses `<select>`+`optgroup`, supported everywhere.
 
 ## License
 
