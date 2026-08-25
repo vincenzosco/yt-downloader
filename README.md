@@ -7,6 +7,9 @@ titolo e copertina, anteprima audio e download dell'audio (m4a o webm).
 
 Pubblicato su <https://vincenzosco.github.io/yt-downloader>.
 
+Engine live: <https://yt-downloader.scopacasa-vincenzo432.workers.dev> (gia'
+configurato come default nella pagina).
+
 ## Come funziona
 
 GitHub Pages serve solo file statici, e YouTube blocca le chiamate dirette
@@ -35,7 +38,7 @@ YouTube → URL audio → l'engine lo streama al browser → download
 
 ## Deploy dell'engine (una tantum)
 
-Serve un account Cloudflare gratuito.
+Serve un account Cloudflare gratuito (gia' fatto per questo progetto).
 
 ```bash
 npx wrangler login          # apre il browser per il login

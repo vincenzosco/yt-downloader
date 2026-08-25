@@ -4,7 +4,8 @@
 
   /* URL dell'engine (worker Cloudflare). Impostato dopo il deploy;
      l'utente puo' cambiarlo dal footer ("cambia"). */
-  var DEFAULT_ENGINE = '';
+
+  var DEFAULT_ENGINE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
   var ENGINE_KEY = 'ytd.engine';
 
   var ENGINE_MISSING = "Engine non configurato. Apri il worker (deploy) e incolla qui il suo URL " +
