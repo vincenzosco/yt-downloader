@@ -287,16 +287,44 @@ function sanitizeName(name) {
 async function streamAudio(id, request) {
   const url = new URL(request.url);
   const name = sanitizeName(url.searchParams.get('name')) + '.m4a';
-  const info = await getAudioInfo(id);
+
+  // raccoglie gli URL audio da tutti i client (2 giri, visitorData fresco
+  // al secondo) e prova ciascuno: se uno solo passa, il download funziona
+  const candidates = [];
+  let lastErr = null;
+  for (let round = 0; round < 2 && !candidates.length; round++) {
+    const vd = await getVisitorData(round === 1);
+    const clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
+    for (let c = 0; c < clients.length; c++) {
+      try {
+        const data = await innertube('/player', [clients[c]], { videoId: id });
+        const info = parsePlayer(data);
+        if (info.url) candidates.push(info.url);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  }
+  if (!candidates.length) throw lastErr || new Error('nessun audio disponibile');
+
   const headers = { 'User-Agent': UA_ANDROID };
   const range = request.headers.get('Range');
   if (range) headers['Range'] = range;
-  const res = await fetch(info.url, { headers });
-  if (!res.ok && res.status !== 206) throw new Error('stream http ' + res.status);
-  const out = new Response(res.body, res);
-  out.headers.set('Access-Control-Allow-Origin', '*');
-  out.headers.set('Content-Disposition', "attachment; filename=\"" + name + '"');
-  return out;
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      const res = await fetch(candidates[i], { headers });
+      if (res.ok || res.status === 206) {
+        const out = new Response(res.body, res);
+        out.headers.set('Access-Control-Allow-Origin', '*');
+        out.headers.set('Content-Disposition', "attachment; filename=\"" + name + '"');
+        return out;
+      }
+      lastErr = new Error('stream http ' + res.status);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('stream non riuscito');
 }
 
 const ID_RE = /^[\w-]{6,20}$/;

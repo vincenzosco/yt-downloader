@@ -76,9 +76,12 @@ node worker/test.js
   (`CLIENT_WEB`, `CLIENT_ANDROID`).
 - **Blocchi temporanei di YouTube**: se l'engine accumula troppe richieste
   in poco tempo, YouTube puo' chiedere "Sign in to confirm you're not a bot"
-  o rifiutare gli stream (403). E' un limite degli IP datacenter e si azzera
-  da solo in un paio d'ore. Il worker usa gia' piu' host, retry, `visitorData`
-  e un fallback sulla pagina HTML per la ricerca; la pagina mostra un
-  messaggio chiaro quando capita.
+  o rifiutare gli stream audio (gli URL googlevideo sono legati all'IP e
+  l'IP datacenter viene a volte bloccato). E' un limite degli IP dei
+  datacenter e si azzera da solo (da pochi minuti a qualche ora). Il worker
+  usa gia' piu' host, retry, `visitorData` e un fallback sulla pagina HTML
+  per la ricerca; la pagina mostra un messaggio chiaro e riprova da sola.
+  L'uso normale (qualche canzone) non crea problemi; solo un uso intenso
+  continuato innesca i blocchi.
 - Il download via worker non usa cache sull'URL audio: riusare lo stesso URL
   googlevideo fa scattare il throttling di YouTube.
