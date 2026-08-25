@@ -438,15 +438,6 @@
         play.textContent = '\u25B6';
         play.setAttribute('aria-label', 'Anteprima audio');
         actions.appendChild(play);
-        if (info.url) {
-          var open = document.createElement('a');
-          open.className = 'btn';
-          open.href = info.url;
-          open.target = '_blank';
-          open.rel = 'noopener';
-          open.textContent = 'apri audio';
-          actions.appendChild(open);
-        }
         var previewWrap = document.createElement('div');
         previewWrap.className = 'card-preview';
         card.appendChild(previewWrap);
