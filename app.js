@@ -256,16 +256,36 @@
     return t || 'audio';
   }
 
+  function shouldRetry(msg) {
+    return /bloccato|rifiutato|bot|sign in|503|502|500|errore di rete/i.test(String(msg));
+  }
+
+  /* esegue exec(ok, err) con retry: l'anti-bot di YouTube e' intermittente,
+     un nuovo tentativo ha buona probabilita' di passare (visitorData fresco). */
+  function retryCall(exec, onOk, onErr, maxAttempts, delayMs) {
+    var attempts = 0;
+    (function go() {
+      attempts++;
+      exec(function (val) { onOk(val); },
+        function (msg) {
+          if (attempts < maxAttempts && shouldRetry(msg)) { setTimeout(go, delayMs); }
+          else { onErr(msg); }
+        });
+    })();
+  }
+
   /* Download diretto: una sola chiamata all'engine (lo stream restituisce
      l'audio m4a preferito). Il titolo arriva dai risultati di ricerca o
      dalla playlist, quindi non serve la chiamata /info. */
   function fetchAudio(item, onProgress, onDone, onErr) {
     var engine = engineUrl();
     var title = item.title || item.id;
-    xhrBlob(engine + '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(title),
+    var url = engine + '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(title);
+    retryCall(
+      function (ok, err) { xhrBlob(url, ok, err, onProgress); },
       function (blob) { onDone(blob, sanitizeTitle(title) + '.m4a'); },
       function (msg) { onErr(friendlyMsg(msg)); },
-      onProgress);
+      3, 1500);
   }
 
   function saveBlob(blob, name, statusId) {
@@ -388,7 +408,8 @@
       if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
     });
     /* info in background: durata + disponibilita' */
-    xhrJson(engine + '/info?id=' + encodeURIComponent(vid),
+    retryCall(
+      function (ok, err) { xhrJson(engine + '/info?id=' + encodeURIComponent(vid), ok, err); },
       function (info) {
         var subEl = card.querySelector('.card-sub');
         var bits = [];
@@ -446,7 +467,8 @@
       },
       function (msg) {
         setStatus('link-status', 'info video: ' + friendlyMsg(msg), true);
-      });
+      },
+      3, 1500);
   }
 
   function openPlaylist(list) {
