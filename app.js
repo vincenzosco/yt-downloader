@@ -60,7 +60,8 @@
       'engine-change-prompt': 'URL del worker (engine). Es.: https://yt-downloader.xxxx.workers.dev',
       'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
       'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
-      'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.'
+      'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
+      'interrupted': 'Download interrotto (rete o annullamento). Riprova.'
     },
     en: {
       'title': 'ytd. — YouTube downloader',
@@ -109,7 +110,8 @@
       'engine-change-prompt': 'Worker (engine) URL. E.g.: https://yt-downloader.xxxx.workers.dev',
       'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
       'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
-      'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.'
+      'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
+      'interrupted': 'Download interrupted (network or cancelled). Try again.'
     }
   };
 
@@ -224,14 +226,19 @@
   function callEngine(pathQuery, ok, err, maxAttempts) {
     var list = engines();
     var idx = 0;
+    var lastErr = null;
     (function next() {
-      if (idx >= list.length) { err('all engines failed'); return; }
+      if (idx >= list.length) {
+        err(lastErr ? friendlyMsg(lastErr) : 'all engines failed');
+        return;
+      }
       var engine = list[idx++];
       retryCall(
         function (o, e) { xhrJson(engine + pathQuery, o, e); },
         function (val) { ok(val); },
         function (msg) {
-          if (shouldRetry(msg)) next(); else err(msg);
+          lastErr = msg;
+          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
         },
         maxAttempts || 3, 1500);
     })();
@@ -241,14 +248,19 @@
   function callEngineStream(pathQuery, ok, err, onProgress, maxAttempts) {
     var list = engines();
     var idx = 0;
+    var lastErr = null;
     (function next() {
-      if (idx >= list.length) { err('all engines failed'); return; }
+      if (idx >= list.length) {
+        err((lastErr === 'interrotto') ? 'interrotto' : (lastErr ? friendlyMsg(lastErr) : 'all engines failed'));
+        return;
+      }
       var engine = list[idx++];
       retryCall(
         function (o, e) { xhrBlob(engine + pathQuery, o, e, onProgress); },
         ok,
         function (msg) {
-          if (shouldRetry(msg)) next(); else err(msg);
+          lastErr = msg;
+          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
         },
         maxAttempts || 3, 1500);
     })();
@@ -278,6 +290,7 @@
 
   function friendlyMsg(raw) {
     var s = String(raw == null ? '' : raw);
+    if (s === 'interrotto') return t('interrupted');
     if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) return t('bot-blocked');
     if (/403|429|400/.test(s)) return t('youtube-refused');
     return s;
@@ -298,6 +311,8 @@
         ok(x.response);
         return;
       }
+      /* status 0 = richiesta annullata o rete interrotta (blob non leggibile) */
+      if (x.status === 0) { err('interrotto'); return; }
       /* errore: prova a estrarre il messaggio dal body (json di errore dell'engine) */
       if (x.response && typeof FileReader !== 'undefined') {
         var r = new FileReader();
