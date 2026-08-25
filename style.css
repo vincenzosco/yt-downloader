@@ -61,10 +61,10 @@ a:hover { color: #e00000; }
 
 /* ---------- form ---------- */
 
-.form { display: table; width: 100%; margin: 26px 0 0; border-collapse: collapse; }
+.form { display: flex; width: 100%; margin: 26px 0 0; }
 .form input {
-  display: table-cell;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 1px solid #ccc;
   border-right: none;
   border-radius: 0;
@@ -74,8 +74,8 @@ a:hover { color: #e00000; }
   background: #fff;
   color: #141414;
 }
-.form input:focus { outline: 2px solid #e00000; border-color: #141414; }
-.form .btn-primary { display: table-cell; width: 1%; white-space: nowrap; }
+.form input:focus { outline: 2px solid #e00000; outline-offset: -1px; border-color: #141414; }
+.form .btn-primary { flex: 0 0 auto; }
 
 /* ---------- bottoni ---------- */
 
@@ -188,6 +188,26 @@ a:hover { color: #e00000; }
 .card .card-actions .btn { margin-right: 8px; }
 .card .card-preview { margin-top: 14px; }
 .card .card-preview audio { width: 100%; }
+
+/* ---------- lingua ---------- */
+
+.lang-toggle {
+  float: right;
+  margin-top: -28px;
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 0;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #777;
+  cursor: pointer;
+}
+.lang-toggle:hover { border-color: #141414; color: #141414; }
+
+@media (max-width: 560px) {
+  .lang-toggle { float: none; margin: 8px 0 0; display: block; }
+}
 
 /* ---------- footer ---------- */
 

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ytd. — download audio da YouTube</title>
-<meta name="description" content="Cerca una canzone su YouTube oppure incolla un link (video o playlist): anteprima di titolo e copertina, download dell'audio.">
+<title data-i18n="title">ytd. — YouTube downloader</title>
+<meta name="description" content="Search a song on YouTube or paste a link (video or playlist): preview title & cover, download audio.">
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -13,22 +13,23 @@
 
 <header class="site-header">
   <div class="wrap">
+    <button type="button" class="lang-toggle" id="lang-toggle" aria-label="Switch language">EN</button>
     <h1 class="wordmark">ytd<span class="dot">.</span></h1>
-    <p class="tagline">download audio da youtube — cerca una canzone oppure incolla un link</p>
+    <p class="tagline" data-i18n="tagline">YouTube downloader — search a song or paste a link</p>
   </div>
 </header>
 
 <main class="wrap">
 
   <nav class="tabs" role="tablist">
-    <button type="button" class="tab is-active" data-tab="search" role="tab">Cerca</button>
-    <button type="button" class="tab" data-tab="link" role="tab">Incolla link</button>
+    <button type="button" class="tab is-active" data-tab="search" role="tab" data-i18n="tab-search">Search</button>
+    <button type="button" class="tab" data-tab="link" role="tab" data-i18n="tab-link">Paste link</button>
   </nav>
 
   <section id="panel-search" class="panel">
     <form id="search-form" class="form" autocomplete="off">
-      <input id="search-input" type="text" placeholder="artista o titolo…" aria-label="Cerca su YouTube">
-      <button type="submit" class="btn btn-primary">Cerca</button>
+      <input id="search-input" type="text" data-i18n-placeholder="placeholder-search" aria-label="Search YouTube">
+      <button type="submit" class="btn btn-primary" data-i18n="btn-search">Search</button>
     </form>
     <p class="status" id="search-status" hidden></p>
     <ol class="results" id="search-results"></ol>
@@ -36,8 +37,8 @@
 
   <section id="panel-link" class="panel" hidden>
     <form id="link-form" class="form" autocomplete="off">
-      <input id="link-input" type="text" placeholder="https://www.youtube.com/watch?v=… o playlist…" aria-label="Link di YouTube">
-      <button type="submit" class="btn btn-primary">Anteprima</button>
+      <input id="link-input" type="text" data-i18n-placeholder="placeholder-link" aria-label="YouTube link">
+      <button type="submit" class="btn btn-primary" data-i18n="btn-preview">Preview</button>
     </form>
     <p class="status" id="link-status" hidden></p>
     <div id="link-preview"></div>
@@ -45,17 +46,17 @@
   </section>
 
   <noscript>
-    <p class="status">Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).</p>
+    <p class="status" data-i18n="noscript">This page requires JavaScript (ES5, works in any browser from ~2015).</p>
   </noscript>
 
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <p class="foot-line">engine: <span class="mono" id="engine-url">non configurato</span>
-      <button type="button" class="linklike" id="engine-change">cambia</button></p>
+    <p class="foot-line"><span data-i18n="engine-label">engine:</span> <span class="mono" id="engine-url">not configured</span>
+      <button type="button" class="linklike" id="engine-change" data-i18n="engine-change">change</button></p>
     <p class="foot-line"><a href="https://github.com/vincenzosco/yt-downloader" target="_blank" rel="noopener">github.com/vincenzosco/yt-downloader</a>
-      — solo per contenuti di cui hai i diritti.</p>
+      — <span data-i18n="disclaimer">only for content you have rights to.</span></p>
   </div>
 </footer>
 

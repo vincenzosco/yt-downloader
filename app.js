@@ -5,11 +5,158 @@
   /* URL dell'engine (worker Cloudflare). Impostato dopo il deploy;
      l'utente puo' cambiarlo dal footer ("cambia"). */
 
-  var DEFAULT_ENGINE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
+  var ENGINE_CLOUDFLARE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
+  var ENGINE_DENO = ''; // deploy Deno Deploy e incolla qui l'URL
   var ENGINE_KEY = 'ytd.engine';
 
-  var ENGINE_MISSING = "Engine non configurato. Apri il worker (deploy) e incolla qui il suo URL " +
-    "con \u201ccambia\u201d in fondo alla pagina.";
+  function engineMissingMsg() { return t('engine-missing'); }
+
+    /* ---------- lingua ---------- */
+
+  var LANGS = {
+    it: {
+      'title': 'ytd. — download audio da YouTube',
+      'tagline': 'download audio da youtube — cerca una canzone oppure incolla un link',
+      'tab-search': 'Cerca',
+      'tab-link': 'Incolla link',
+      'placeholder-search': 'artista o titolo…',
+      'btn-search': 'Cerca',
+      'placeholder-link': 'https://www.youtube.com/watch?v=… o playlist…',
+      'btn-preview': 'Anteprima',
+      'noscript': 'Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).',
+      'engine-label': 'engine:',
+      'engine-change': 'cambia',
+      'engine-not-configured': 'non configurato',
+      'disclaimer': 'solo per contenuti di cui hai i diritti.',
+      'engine-missing': "Engine non configurato. Apri il worker (deploy) e incolla qui il suo URL con \u201ccambia\u201d in fondo alla pagina.",
+      'searching': 'cerco…',
+      'no-results': 'nessun risultato per \u201c{0}\u201d',
+      'search-err': 'ricerca: {0}',
+      'formats-err': 'formati: {0}',
+      'download-err': 'Download: {0}',
+      'info-err': 'info video: {0}',
+      'playlist-err': 'playlist: {0}',
+      'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
+      'loading-tracks': 'carico le tracce…',
+      'playlist-empty': 'Playlist vuota o non accessibile.',
+      'tracks-count': '{0} tracce',
+      'download': 'Scarica',
+      'download-all': 'Scarica tutte',
+      'download-audio': 'Scarica audio',
+      'preview-audio': 'Anteprima audio',
+      'cancel': 'Annulla',
+      'quality': 'Qualità',
+      'quality-audio': 'Qualità audio',
+      'saved': 'salvato',
+      'error': 'errore',
+      'done': 'fatto',
+      'search': 'Cerca',
+      'group-audio': 'Audio',
+      'group-video-mixed': 'Video (con audio)',
+      'group-video-only': 'Video (solo video)',
+      'opt-audio-rec': 'Audio AAC (consigliato)',
+      'opt-audio-best': 'Audio Opus (migliore)',
+      'opt-audio-light': 'Audio leggero',
+      'no-save-support': 'Il tuo browser non supporta il salvataggio diretto: apri il link e salva con \u201csalva con nome\u201d.',
+      'engine-change-prompt': 'URL del worker (engine). Es.: https://yt-downloader.xxxx.workers.dev',
+      'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
+      'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
+      'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.'
+    },
+    en: {
+      'title': 'ytd. — YouTube downloader',
+      'tagline': 'YouTube downloader — search a song or paste a link',
+      'tab-search': 'Search',
+      'tab-link': 'Paste link',
+      'placeholder-search': 'artist or title…',
+      'btn-search': 'Search',
+      'placeholder-link': 'https://www.youtube.com/watch?v=… or playlist…',
+      'btn-preview': 'Preview',
+      'noscript': 'This page requires JavaScript (ES5, works in any browser from ~2015).',
+      'engine-label': 'engine:',
+      'engine-change': 'change',
+      'engine-not-configured': 'not configured',
+      'disclaimer': 'only for content you have rights to.',
+      'engine-missing': "Engine not configured. Deploy the worker and paste its URL here via \u201cchange\u201d at the bottom of the page.",
+      'searching': 'searching…',
+      'no-results': 'no results for \u201c{0}\u201d',
+      'search-err': 'search: {0}',
+      'formats-err': 'formats: {0}',
+      'download-err': 'Download: {0}',
+      'info-err': 'video info: {0}',
+      'playlist-err': 'playlist: {0}',
+      'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
+      'loading-tracks': 'loading tracks…',
+      'playlist-empty': 'Empty or inaccessible playlist.',
+      'tracks-count': '{0} tracks',
+      'download': 'Download',
+      'download-all': 'Download all',
+      'download-audio': 'Download audio',
+      'preview-audio': 'Audio preview',
+      'cancel': 'Cancel',
+      'quality': 'Quality',
+      'quality-audio': 'Audio quality',
+      'saved': 'saved',
+      'error': 'error',
+      'done': 'done',
+      'search': 'Search',
+      'group-audio': 'Audio',
+      'group-video-mixed': 'Video (with audio)',
+      'group-video-only': 'Video (video only)',
+      'opt-audio-rec': 'Audio AAC (recommended)',
+      'opt-audio-best': 'Audio Opus (best)',
+      'opt-audio-light': 'Light audio',
+      'no-save-support': 'Your browser does not support direct saving: open the link and save with \u201csave as\u201d.',
+      'engine-change-prompt': 'Worker (engine) URL. E.g.: https://yt-downloader.xxxx.workers.dev',
+      'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
+      'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
+      'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.'
+    }
+  };
+
+  var LANG_KEY = 'ytd.lang';
+  var currentLang = storageGet(LANG_KEY) === 'en' ? 'en' : 'it';
+
+  function t(key) {
+    var s = LANGS[currentLang][key];
+    if (s == null) s = LANGS.it[key];
+    return s == null ? key : s;
+  }
+
+  /* t('no-results', q) -> sostituisce {0}, {1}... */
+  function tF(key) {
+    var s = t(key);
+    for (var i = 1; i < arguments.length; i++) {
+      s = s.split('{' + (i - 1) + '}').join(arguments[i]);
+    }
+    return s;
+  }
+
+  function applyLang() {
+    document.documentElement.lang = currentLang;
+    var els = document.querySelectorAll('[data-i18n]');
+    for (var i = 0; i < els.length; i++) {
+      var k = els[i].getAttribute('data-i18n');
+      if (t(k)) els[i].textContent = t(k);
+    }
+    var ph = document.querySelectorAll('[data-i18n-placeholder]');
+    for (var j = 0; j < ph.length; j++) {
+      ph[j].setAttribute('placeholder', t(ph[j].getAttribute('data-i18n-placeholder')));
+    }
+    var btn = $('lang-toggle');
+    if (btn) btn.textContent = currentLang === 'it' ? 'EN' : 'IT';
+    renderEngineUrl();
+  }
+
+  function bindLang() {
+    var btn = $('lang-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      currentLang = (currentLang === 'it') ? 'en' : 'it';
+      storageSet(LANG_KEY, currentLang);
+      applyLang();
+    });
+  }
 
   /* ---------- helpers ---------- */
 
@@ -62,7 +209,51 @@
 
   function engineUrl() {
     var v = storageGet(ENGINE_KEY);
-    return (v && v.length) ? v : DEFAULT_ENGINE;
+    return (v && v.length) ? v : ENGINE_CLOUDFLARE;
+  }
+
+  /* elenco ordinato di engine da provare: custom > Cloudflare > Deno */
+  function engines() {
+    var list = [];
+    var custom = storageGet(ENGINE_KEY);
+    if (custom) list.push(custom);
+    if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
+    if (ENGINE_DENO && ENGINE_DENO.length && list.indexOf(ENGINE_DENO) === -1) list.push(ENGINE_DENO);
+    return list;
+  }
+
+  /* chiama un endpoint JSON con fallback su piu' engine */
+  function callEngine(pathQuery, ok, err, maxAttempts) {
+    var list = engines();
+    var idx = 0;
+    (function next() {
+      if (idx >= list.length) { err('all engines failed'); return; }
+      var engine = list[idx++];
+      retryCall(
+        function (o, e) { xhrJson(engine + pathQuery, o, e); },
+        function (val) { ok(val); },
+        function (msg) {
+          if (shouldRetry(msg)) next(); else err(msg);
+        },
+        maxAttempts || 3, 1500);
+    })();
+  }
+
+  /* chiama uno stream (blob) con fallback su piu' engine */
+  function callEngineStream(pathQuery, ok, err, onProgress, maxAttempts) {
+    var list = engines();
+    var idx = 0;
+    (function next() {
+      if (idx >= list.length) { err('all engines failed'); return; }
+      var engine = list[idx++];
+      retryCall(
+        function (o, e) { xhrBlob(engine + pathQuery, o, e, onProgress); },
+        ok,
+        function (msg) {
+          if (shouldRetry(msg)) next(); else err(msg);
+        },
+        maxAttempts || 3, 1500);
+    })();
   }
 
   function xhrJson(url, ok, err) {
@@ -72,7 +263,7 @@
       if (x.readyState !== 4) return;
       if (x.status >= 200 && x.status < 300) {
         var data = null;
-        try { data = JSON.parse(x.responseText); } catch (e) { err('risposta non valida'); return; }
+        try { data = JSON.parse(x.responseText); } catch (e) { err('invalid response'); return; }
         ok(data);
       } else {
         var msg = 'errore ' + x.status;
@@ -83,21 +274,19 @@
         err(msg);
       }
     };
-    x.onerror = function () { err('errore di rete'); };
+    x.onerror = function () { err('network error'); };
     x.send();
   }
 
   function friendlyMsg(raw) {
     var s = String(raw == null ? '' : raw);
-    if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) {
-      return "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.";
-    }
-    if (/403|429|400/.test(s)) return 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.';
+    if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) return t('bot-blocked');
+    if (/403|429|400/.test(s)) return t('youtube-refused');
     return s;
   }
 
   function fetchFormats(id, ok, err) {
-    xhrJson(engineUrl() + '/formats?id=' + encodeURIComponent(id), ok, err);
+    callEngine('/formats?id=' + encodeURIComponent(id), ok, err);
   }
 
   function xhrBlob(url, ok, err, onProgress) {
@@ -125,7 +314,7 @@
         err('errore ' + x.status);
       }
     };
-    x.onerror = function () { err('errore di rete'); };
+    x.onerror = function () { err('network error'); };
     x.send();
   }
 
@@ -179,13 +368,13 @@
     playBtn.type = 'button';
     playBtn.className = 'btn btn-play';
     playBtn.textContent = '\u25B6';
-    playBtn.setAttribute('aria-label', 'Anteprima audio');
+    playBtn.setAttribute('aria-label', t('preview-audio'));
     actions.appendChild(playBtn);
 
     var dlBtn = document.createElement('button');
     dlBtn.type = 'button';
     dlBtn.className = 'btn btn-dl';
-    dlBtn.textContent = 'Scarica';
+    dlBtn.textContent = t('download');
     actions.appendChild(dlBtn);
 
     li.appendChild(actions);
@@ -208,7 +397,7 @@
     li.appendChild(meta);
 
     bindPlay(playBtn, li, item);
-    bindDownload(li, dlBtn, item, 'Scarica', statusId);
+    bindDownload(li, dlBtn, item, t('download'), statusId);
 
     return li;
   }
@@ -248,8 +437,8 @@
         },
         function (msg) {
           btn.removeAttribute('data-busy');
-          btn.textContent = 'errore';
-          setStatus(statusId || 'search-status', 'formati: ' + friendlyMsg(msg), true);
+          btn.textContent = t('error');
+          setStatus(statusId || 'search-status', tF('formats-err', friendlyMsg(msg)), true);
           setTimeout(function () { btn.textContent = label; }, 2200);
         });
     });
@@ -265,7 +454,7 @@
 
     var sel = document.createElement('select');
     sel.className = 'picker-select';
-    sel.setAttribute('aria-label', 'Qualità');
+    sel.setAttribute('aria-label', t('quality'));
 
     function addGroup(title, list) {
       if (!list || !list.length) return;
@@ -280,20 +469,20 @@
       }
       sel.appendChild(g);
     }
-    addGroup('Audio', fmts.audio);
-    addGroup('Video (con audio)', fmts.progressive);
-    addGroup('Video (solo video)', fmts.video);
+    addGroup(t('group-audio'), fmts.audio);
+    addGroup(t('group-video-mixed'), fmts.progressive);
+    addGroup(t('group-video-only'), fmts.video);
 
     var go = document.createElement('button');
     go.type = 'button';
     go.className = 'btn btn-dl';
-    go.textContent = 'Scarica';
+    go.textContent = t('download');
 
     var cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'btn';
     cancel.textContent = '✕';
-    cancel.setAttribute('aria-label', 'Annulla');
+    cancel.setAttribute('aria-label', t('cancel'));
 
     picker.appendChild(sel);
     picker.appendChild(go);
@@ -314,30 +503,27 @@
 
   /* avvia il download di un singolo formato (itag) */
   function startDownload(item, itag, ext, btn, label, statusId) {
-    var engine = engineUrl();
     var title = item.title || item.id;
-    var url = engine + '/stream?id=' + encodeURIComponent(item.id) +
+    var path = '/stream?id=' + encodeURIComponent(item.id) +
       '&itag=' + encodeURIComponent(itag) +
       '&name=' + encodeURIComponent(title);
     btn.setAttribute('data-busy', '1');
     btn.textContent = '…';
-    retryCall(
-      function (ok, err) {
-        xhrBlob(url, ok, err, function (loaded, total) {
-          if (total) btn.textContent = Math.round(loaded / total * 100) + '%';
-        });
-      },
+    callEngineStream(
+      path,
       function (blob) {
         saveBlob(blob, sanitizeTitle(title) + '.' + ext, statusId);
-        btn.textContent = 'salvato';
+        btn.textContent = t('saved');
         reset();
       },
       function (msg) {
-        btn.textContent = 'errore';
-        setStatus(statusId || 'search-status', 'Download: ' + friendlyMsg(msg), true);
+        btn.textContent = t('error');
+        setStatus(statusId || 'search-status', tF('download-err', friendlyMsg(msg)), true);
         reset();
       },
-      3, 1500);
+      function (loaded, total) {
+        if (total) btn.textContent = Math.round(loaded / total * 100) + '%';
+      });
     function reset() {
       setTimeout(function () {
         btn.removeAttribute('data-busy');
@@ -356,7 +542,7 @@
   }
 
   function shouldRetry(msg) {
-    return /bloccato|rifiutato|bot|sign in|503|502|500|errore di rete/i.test(String(msg));
+    return /bot|sign in|blocked|bloccato|blocco|rifiutato|403|429|500|502|503|network error|errore di rete|invalid response/i.test(String(msg));
   }
 
   /* esegue exec(ok, err) con retry: l'anti-bot di YouTube e' intermittente,
@@ -375,22 +561,21 @@
 
   /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
   function fetchAudio(item, itag, ext, onProgress, onDone, onErr) {
-    var engine = engineUrl();
     var title = item.title || item.id;
-    var url = engine + '/stream?id=' + encodeURIComponent(item.id) +
+    var path = '/stream?id=' + encodeURIComponent(item.id) +
       (itag ? '&itag=' + encodeURIComponent(itag) : '') +
       '&name=' + encodeURIComponent(title);
-    retryCall(
-      function (ok, err) { xhrBlob(url, ok, err, onProgress); },
+    callEngineStream(
+      path,
       function (blob) { onDone(blob, sanitizeTitle(title) + '.' + (ext || 'm4a')); },
       function (msg) { onErr(friendlyMsg(msg)); },
-      3, 1500);
+      onProgress);
   }
 
   function saveBlob(blob, name, statusId) {
     var U = window.URL || window.webkitURL;
     if (!U || !U.createObjectURL) {
-      setStatus(statusId || 'search-status', 'Il tuo browser non supporta il salvataggio diretto: apri il link e salva con \u201csalva con nome\u201d.', true);
+      setStatus(statusId || 'search-status', t('no-save-support'), true);
       return;
     }
     var url = U.createObjectURL(blob);
@@ -408,20 +593,19 @@
   /* ---------- ricerca ---------- */
 
   function doSearch(q) {
-    var engine = engineUrl();
-    if (!engine) { setStatus('search-status', ENGINE_MISSING, true); return; }
+    if (!engines().length) { setStatus('search-status', engineMissingMsg(), true); return; }
     clearStatus('search-status');
     var list = $('search-results');
     list.innerHTML = '';
-    setStatus('search-status', 'cerco\u2026');
-    xhrJson(engine + '/search?q=' + encodeURIComponent(q),
+    setStatus('search-status', t('searching'));
+    callEngine('/search?q=' + encodeURIComponent(q),
       function (data) {
         clearStatus('search-status');
         var results = (data && data.results) || [];
-        if (!results.length) { setStatus('search-status', 'nessun risultato per \u201c' + q + '\u201d', true); return; }
+        if (!results.length) { setStatus('search-status', tF('no-results', q), true); return; }
         for (var i = 0; i < results.length; i++) list.appendChild(buildRow(results[i], 'search-status'));
       },
-      function (msg) { setStatus('search-status', 'ricerca: ' + friendlyMsg(msg), true); });
+      function (msg) { setStatus('search-status', tF('search-err', friendlyMsg(msg)), true); });
   }
 
   /* ---------- link incollato ---------- */
@@ -475,7 +659,6 @@
   }
 
   function doLink(raw) {
-    var engine = engineUrl();
     clearStatus('link-status');
     var box = $('link-preview');
     var tracks = $('link-tracks');
@@ -483,8 +666,8 @@
     tracks.innerHTML = '';
 
     var parsed = parseYtUrl(raw);
-    if (!parsed) { setStatus('link-status', 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).', true); return; }
-    if (!engine) { setStatus('link-status', ENGINE_MISSING, true); return; }
+    if (!parsed) { setStatus('link-status', t('link-unrecognized'), true); return; }
+    if (!engines().length) { setStatus('link-status', engineMissingMsg(), true); return; }
 
     if (parsed.list) {
       openPlaylist(parsed.list);
@@ -507,8 +690,7 @@
       if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
     });
     /* info in background: durata + disponibilita' */
-    retryCall(
-      function (ok, err) { xhrJson(engine + '/info?id=' + encodeURIComponent(vid), ok, err); },
+    callEngine('/info?id=' + encodeURIComponent(vid),
       function (info) {
         var subEl = card.querySelector('.card-sub');
         var bits = [];
@@ -528,14 +710,14 @@
         var dl = document.createElement('button');
         dl.type = 'button';
         dl.className = 'btn btn-primary';
-        dl.textContent = 'Scarica';
+        dl.textContent = t('download');
         actions.appendChild(dl);
-        bindDownload(card.querySelector('.card-body'), dl, item, 'Scarica', 'link-status');
+        bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status');
         var play = document.createElement('button');
         play.type = 'button';
         play.className = 'btn btn-play';
         play.textContent = '\u25B6';
-        play.setAttribute('aria-label', 'Anteprima audio');
+        play.setAttribute('aria-label', t('preview-audio'));
         actions.appendChild(play);
         var previewWrap = document.createElement('div');
         previewWrap.className = 'card-preview';
@@ -556,13 +738,11 @@
         });
       },
       function (msg) {
-        setStatus('link-status', 'info video: ' + friendlyMsg(msg), true);
-      },
-      3, 1500);
+        setStatus('link-status', tF('info-err', friendlyMsg(msg)), true);
+      });
   }
 
   function openPlaylist(list) {
-    var engine = engineUrl();
     var box = $('link-preview');
     var card = buildCard(thumbFor(''), 'Playlist', '\u2026', '', null);
     box.appendChild(card);
@@ -570,29 +750,29 @@
       if (o && o.title) card.querySelector('.card-title').textContent = o.title;
       if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
     });
-    setStatus('link-status', 'carico le tracce\u2026');
-    xhrJson(engine + '/playlist?list=' + encodeURIComponent(list),
+    setStatus('link-status', t('loading-tracks'));
+    callEngine('/playlist?list=' + encodeURIComponent(list),
       function (data) {
         clearStatus('link-status');
         if (!data || !data.items || !data.items.length) {
-          setStatus('link-status', 'Playlist vuota o non accessibile.', true);
+          setStatus('link-status', t('playlist-empty'), true);
           return;
         }
         if (data.title) card.querySelector('.card-title').textContent = data.title;
         var n = data.items.length;
         var subEl = card.querySelector('.card-sub');
         var bits = subEl.textContent ? [subEl.textContent] : [];
-        bits.push(n + ' tracce');
+        bits.push(tF('tracks-count', n));
         subEl.textContent = bits.join(' \u00B7 ');
         var actions = document.createElement('div');
         actions.className = 'card-actions';
         var qsel = document.createElement('select');
         qsel.className = 'picker-select';
-        qsel.setAttribute('aria-label', 'Qualità audio');
+        qsel.setAttribute('aria-label', t('quality-audio'));
         var qopts = [
-          ['140', 'm4a', 'Audio AAC (consigliato)'],
-          ['251', 'webm', 'Audio Opus (migliore)'],
-          ['139', 'm4a', 'Audio leggero']
+          ['140', 'm4a', t('opt-audio-rec')],
+          ['251', 'webm', t('opt-audio-best')],
+          ['139', 'm4a', t('opt-audio-light')]
         ];
         for (var qi = 0; qi < qopts.length; qi++) {
           var qo = document.createElement('option');
@@ -604,7 +784,7 @@
         var all = document.createElement('button');
         all.type = 'button';
         all.className = 'btn btn-primary';
-        all.textContent = 'Scarica tutte';
+        all.textContent = t('download-all');
         actions.appendChild(qsel);
         actions.appendChild(all);
         card.querySelector('.card-body').appendChild(actions);
@@ -613,7 +793,7 @@
         var listEl = $('link-tracks');
         for (var i = 0; i < data.items.length; i++) listEl.appendChild(buildRow(data.items[i], 'link-status'));
       },
-      function (msg) { setStatus('link-status', 'playlist: ' + friendlyMsg(msg), true); });
+      function (msg) { setStatus('link-status', tF('playlist-err', friendlyMsg(msg)), true); });
   }
 
   function downloadAll(btn, items, qsel) {
@@ -631,8 +811,8 @@
       var i = 0;
       (function next() {
         if (i >= items.length) {
-          btn.textContent = 'fatto';
-          setTimeout(function () { btn.textContent = 'Scarica tutte'; busy = false; }, 2500);
+          btn.textContent = t('done');
+          setTimeout(function () { btn.textContent = t('download-all'); busy = false; }, 2500);
           return;
         }
         var item = items[i];
@@ -649,17 +829,17 @@
   function renderEngineUrl() {
     var el = $('engine-url');
     var u = engineUrl();
-    el.textContent = u || 'non configurato';
+    el.textContent = u || t('engine-not-configured');
   }
 
   function bindEngineChange() {
     $('engine-change').addEventListener('click', function () {
       var cur = engineUrl();
-      var v = window.prompt('URL del worker (engine). Es.: https://yt-downloader.xxxx.workers.dev', cur);
+      var v = window.prompt(t('engine-change-prompt'), cur);
       if (v === null) return;              /* annullato */
       v = String(v || '').replace(/^\s+|\s+$/g, '');
       if (!v) { storageDel(ENGINE_KEY); renderEngineUrl(); return; }
-      if (!/^https?:\/\//.test(v)) { window.alert('Inserisci un URL valido che inizia con http:// o https://'); return; }
+      if (!/^https?:\/\//.test(v)) { window.alert(t('engine-change-invalid')); return; }
       storageSet(ENGINE_KEY, v);
       renderEngineUrl();
     });
@@ -668,6 +848,8 @@
   /* ---------- init ---------- */
 
   function init() {
+    bindLang();
+    applyLang();
     bindTabs();
     renderEngineUrl();
     bindEngineChange();

@@ -1,87 +1,171 @@
 # ytd.
 
-Downloader YouTube minimale, ospitato su GitHub Pages.
+YouTube downloader — minimale, su GitHub Pages. Cerca una canzone o incolla un link (video o playlist): anteprima titolo e copertina, download audio.
 
-Cerca una canzone oppure incolla un link (video o playlist): anteprima di
-titolo e copertina, anteprima audio e download dell'audio (m4a o webm).
+Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
-Pubblicato su <https://vincenzosco.github.io/yt-downloader>.
-
-Engine live: <https://yt-downloader.scopacasa-vincenzo432.workers.dev> (gia'
-configurato come default nella pagina).
+[English version below ↓](#english)
 
 ## Come funziona
 
-GitHub Pages serve solo file statici, e YouTube blocca le chiamate dirette
-dal browser (lo blocca se la richiesta arriva con header `Origin`). Quindi
-l'architettura e' divisa in due:
+GitHub Pages (statico) + engine serverless (Cloudflare Worker o Deno Deploy). YouTube blocca le chiamate con header `Origin` (il browser non può chiamare direttamente le API interne). L'engine le chiama lato server, senza `Origin`.
 
 ```
-browser (la pagina, statica su GitHub Pages)
-   │  oEmbed di YouTube (CORS nativo)  → anteprima titolo/copertina
+browser (pagina statica su GitHub Pages)
+   │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
    │  chiamate all'engine (CORS *)
    ▼
-engine: un Cloudflare Worker (gratis)
-   │  chiama le API interne di YouTube (Innertube) lato server, senza Origin
+engine: Cloudflare Worker + Deno Deploy (entrambi gratis)
+   │  API Innertube lato server, senza Origin, retry su più host/client
    ▼
-YouTube → URL audio → l'engine lo streama al browser → download
+YouTube → URL audio/video → l'engine lo streama al browser → download
 ```
+
+Il frontend prova automaticamente **entrambi gli engine**: se uno è in
+cooldown anti-bot, passa all'altro (provider e IP diversi).
 
 ### Endpoint dell'engine (`worker/index.js`)
 
-| Endpoint        | Descrizione                                            |
-|-----------------|--------------------------------------------------------|
-| `/search?q=…`   | ricerca (titolo, autore, durata, copertina)            |
-| `/info?id=…`    | dettagli video + URL audio (m4a 128 kbps se disponibile) |
-| `/playlist?list=…` | elenco tracce di una playlist                       |
-| `/stream?id=…`  | stream dell'audio, con CORS e supporto `Range`         |
+| Endpoint           | Descrizione                                      |
+|--------------------|--------------------------------------------------|
+| `/search?q=…`      | ricerca (titolo, autore, durata, copertina)     |
+| `/info?id=…`       | dettagli video + audio preferito                 |
+| `/formats?id=…`    | tutti i formati (audio, progressive, video-only) |
+| `/playlist?list=…` | elenco tracce di una playlist                    |
+| `/stream?id=…&itag=…` | stream del file (CORS, Range), itag opzionale |
 
-## Deploy dell'engine (una tantum)
+## Deploy
 
-Serve un account Cloudflare gratuito (gia' fatto per questo progetto).
+### Cloudflare Worker
 
 ```bash
-npx wrangler login          # apre il browser per il login
-npx wrangler deploy         # pubblica il worker
+npx wrangler login
+npx wrangler deploy
 ```
 
-Al termine viene stampato l'URL, tipo `https://yt-downloader.xxxx.workers.dev`.
-Incollalo nel sito: footer → **cambia** (oppure imposta `DEFAULT_ENGINE` in
-`app.js` prima del deploy e lo trovi gia' configurato).
+### Deno Deploy
 
-Verifica rapida:
+1. Vai su [dash.deno.com](https://dash.deno.com) → New Project → collega il repo GitHub.
+2. Entrypoint: `deno/main.js`.
+3. L'URL sarà `https://yt-downloader-deno.deno.dev` (o simile). Incollalo in `app.js` come `ENGINE_DENO`.
+
+In alternativa via CLI:
 
 ```bash
-curl "https://yt-downloader.xxxx.workers.dev/search?q=test"
-curl -I "https://yt-downloader.xxxx.workers.dev/stream?id=dQw4w9WgXcQ"
+# installa deployctl (npm)
+npx deployctl deploy --project=yt-downloader-deno --token=$DENO_DEPLOY_TOKEN --entrypoint=deno/main.js
 ```
 
-Test del parsing contro i dati reali di YouTube (senza deploy):
+Test rapido:
 
 ```bash
-node worker/test.js
+curl "https://xxx.workers.dev/search?q=test"
+curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
 ```
 
 ## Sviluppo
 
 - `index.html`, `style.css`, `app.js` — pagina statica, JavaScript ES5
-  volutamente senza framework, niente build: gira anche su browser datati.
-- `worker/index.js` — engine (Cloudflare Workers, JS moderno).
+  volutamente senza framework né build: gira anche su browser datati.
+- `worker/index.js` — logica engine (Web API standard, funziona su Cloudflare
+  Workers e Deno Deploy).
+- `deno/main.js` — entrypoint Deno Deploy (riusa `worker/index.js`).
+
+### Test locale
+
+```bash
+# test del parsing worker (Node.js)
+node worker/test.js
+
+# test engine su Deno (scarica il runtime in /tmp)
+curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/tmp/denobin sh -s v2.0.0
+/tmp/denobin/bin/deno run --allow-net deno/test.js
+```
 
 ## Note
 
 - Solo per contenuti di cui hai i diritti.
-- Gli endpoint interni di YouTube possono cambiare: se qualcosa smette di
-  funzionare, aggiorna le versioni dei client in `worker/index.js`
-  (`CLIENT_WEB`, `CLIENT_ANDROID`).
-- **Blocchi temporanei di YouTube**: se l'engine accumula troppe richieste
-  in poco tempo, YouTube puo' chiedere "Sign in to confirm you're not a bot"
-  o rifiutare gli stream audio (gli URL googlevideo sono legati all'IP e
-  l'IP datacenter viene a volte bloccato). E' un limite degli IP dei
-  datacenter e si azzera da solo (da pochi minuti a qualche ora). Il worker
-  usa gia' piu' host, retry, `visitorData` e un fallback sulla pagina HTML
-  per la ricerca; la pagina mostra un messaggio chiaro e riprova da sola.
-  L'uso normale (qualche canzone) non crea problemi; solo un uso intenso
-  continuato innesca i blocchi.
-- Il download via worker non usa cache sull'URL audio: riusare lo stesso URL
+- Gli endpoint Innertube possono cambiare: aggiorna i client in `worker/index.js`
+  (`CLIENT_WEB`, `CLIENT_ANDROID`, `CLIENT_IOS`).
+- **Blocchi temporanei**: se l'engine accumula troppe richieste in poco tempo,
+  YouTube può chiedere "Sign in to confirm you're not a bot". È un limite degli
+  IP datacenter e si azzera da solo (pochi minuti/diverse ore). La pagina riprova
+  da sola e passa automaticamente all'altro engine (Cloudflare → Deno e viceversa).
+- Il download via engine non usa cache sull'URL audio: riusare lo stesso URL
   googlevideo fa scattare il throttling di YouTube.
+
+<hr>
+
+<a id="english"></a>
+## English
+
+# ytd.
+
+A minimal YouTube downloader, hosted on GitHub Pages. Search a song or
+paste a link (video or playlist): preview title & cover, download audio.
+
+Published at [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
+
+The page has an IT/EN language toggle (top right). The engine serves both languages, but the page UI is available in both via the toggle.
+
+## How it works
+
+GitHub Pages (static) + serverless engine (Cloudflare Worker or Deno Deploy).
+YouTube blocks requests with `Origin` headers that come from the browser.
+The engine makes API calls server-side, without `Origin`.
+
+The frontend automatically tries **both engines** in sequence: if one is
+temporarily blocked (bot-challenge cooldown), it falls back to the other
+(different provider, different IP pool).
+
+### Engine endpoints (`worker/index.js`)
+
+| Endpoint           | Description                                      |
+|--------------------|--------------------------------------------------|
+| `/search?q=…`      | search (title, author, duration, thumbnail)     |
+| `/info?id=…`       | video details + preferred audio                  |
+| `/formats?id=…`    | all available formats (audio, progressive, video)|
+| `/playlist?list=…` | playlist track list                              |
+| `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
+
+## Duplicate deploying
+
+### Cloudflare Worker
+
+```bash
+npx wrangler login
+npx wrangler deploy
+```
+
+Paste the resulting URL in the page footer (**change**) or set `ENGINE_CLOUDFLARE`
+in `app.js`.
+
+### Deno Deploy
+
+1. Go to [dash.deno.com](https://dash.deno.com) → New Project → connect GitHub repo.
+2. Entrypoint: `deno/main.js`.
+3. Paste the resulting URL in `app.js` as `ENGINE_DENO`.
+
+Or via CLI:
+
+```bash
+npx deployctl deploy --project=yt-downloader-deno --token=$DENO_DEPLOY_TOKEN --entrypoint=deno/main.js
+```
+
+## Development
+
+- `index.html`, `style.css`, `app.js` — static page, ES5 (no framework, no build).
+- `worker/index.js` — engine logic (standard Web APIs, works on both Cloudflare Workers and Deno Deploy).
+- `deno/main.js` — Deno Deploy entrypoint (reuses `worker/index.js`).
+
+## Notes
+
+- Only for content you have rights to.
+- **Temporary blocks**: heavy repeated use from datacenter IPs triggers
+  YouTube's bot-challenge ("Sign in to confirm you're not a bot").
+  Blocks reset on their own (minutes/hours). The page retries automatically
+  and falls back to the other engine. Normal use (a few songs) doesn't trigger them.
+
+## License
+
+MIT
