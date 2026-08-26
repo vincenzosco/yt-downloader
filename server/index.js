@@ -14,7 +14,7 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { publishTunnelUrl } from './publish-url.js';
+import { publishTunnelUrl, publishedUrl } from './publish-url.js';
 
 // il server deve restare su (NAS/VPS): un errore isolato non deve ucciderlo
 process.on('uncaughtException', (e) => console.error('[server] uncaughtException:', e && e.stack ? e.stack : e));
@@ -26,14 +26,8 @@ if (process.env.POT) globalThis.POT = process.env.POT;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const worker = await import(path.join(__dirname, '..', 'worker', 'index.js')).then((m) => m.default);
 
-// ---- registrazione del tunnel sul worker Cloudflare ----
-// Il NAS registra il suo URL pubblico corrente (trycloudflare, che cambia a
-// ogni riavvio) sul worker: la pagina lo scopre via /nas e lo usa come engine
-// preferito. La chiave evita che chiunque registri un NAS farlocco.
-// Env:  REGISTER_WORKER (URL del worker, es. https://xxx.workers.dev)
-//       NAS_REGISTER_KEY  (chiave condivisa col worker)
-const REGISTER_WORKER = (process.env.REGISTER_WORKER || '').replace(/\/+$/, '');
-const REGISTER_KEY = process.env.NAS_REGISTER_KEY || '';
+// (La vecchia registrazione sul worker Cloudflare è stata rimossa: ora
+// l'URL viene pubblicato su GitHub in server/publish-url.js.)
 
 function tunnelUrlFromLog() {
   // con screen il log è server.log.cloudflared.screen; prima era
@@ -60,43 +54,15 @@ function tunnelUrlFromLog() {
   return best;
 }
 
-let lastRegisteredUrl = null;
-async function registerTunnel() {
-  if (!REGISTER_WORKER || !REGISTER_KEY) return;
-  const url = tunnelUrlFromLog();
-  if (!url) return;
-  // heartbeat: registra sempre (il worker scarta il NAS dopo 3 min di silenzio).
-  // Log solo quando l'URL cambia per non sporcare il log ogni 60s.
-  try {
-    const res = await fetch(REGISTER_WORKER + '/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, key: REGISTER_KEY }),
-    });
-    if (res.ok) {
-      if (url !== lastRegisteredUrl) {
-        lastRegisteredUrl = url;
-        console.log('[nas] registrato su worker:', url);
-      }
-    } else {
-      console.error('[nas] registrazione fallita:', res.status, (await res.text()).slice(0, 120));
-    }
-  } catch (e) {
-    console.error('[nas] registrazione errore:', e.message);
-  }
-}
-
-// registra subito e poi ogni 60s (l'URL del tunnel può cambiare)
-registerTunnel();
-setInterval(registerTunnel, 60 * 1000);
-
 // ---- pubblicazione dell'URL su GitHub (nas-url.txt) ----
 // La pagina legge il file direttamente dal repo: l'indirizzo del NAS resta
 // aggiornato anche senza worker. Scrive solo quando l'URL cambia.
 let lastGithubUrl = null;
 async function publishTunnel() {
   if (!process.env.GITHUB_TOKEN) return;
-  const url = tunnelUrlFromLog();
+  // il log del tunnel può essere stato troncato dalla pulizia automatica o
+  // non ancora scritto dopo un riavvio: ripiega sull'ultimo URL noto
+  let url = tunnelUrlFromLog() || publishedUrl();
   if (!url) return;
   const r = await publishTunnelUrl(url);
   if (r.ok && !r.cached && url !== lastGithubUrl) {

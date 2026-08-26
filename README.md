@@ -154,6 +154,12 @@ Al riavvio del NAS l'engine, il tunnel e il watchdog ripartono da soli
 (`S99` = eseguito tra gli ultimi al boot, quando la rete è pronta; con
 retry automatico se il volume non è ancora montato).
 
+**Rete di sicurezza finale**: un cron sul NAS (`/etc/crontab`) esegue
+`server/start.sh` ogni 5 minuti — anche se il watchdog stesso morisse, il
+cron riavvia tutto. Il watchdog inoltre tronca da solo i log oltre i 10MB
+(disco pieno = crash). Verificato: cron attivo (test con riga temporanea),
+riavvio completo OK, cambio URL pubblicato e scoperto dalla pagina live.
+
 ### Usare il NAS come engine nella pagina
 
 La pagina usa **solo il NAS** come engine:
@@ -428,6 +434,13 @@ sudo /usr/local/etc/rc.d/S99ytd.sh stop    # stops both
 After a NAS reboot the engine, the tunnel and the watchdog start on their
 own (`S99` = run among the last at boot, when the network is ready; with
 automatic retry if the volume is not mounted yet).
+
+**Final safety net**: a cron job on the NAS (`/etc/crontab`) runs
+`server/start.sh` every 5 minutes — even if the watchdog itself dies, the
+cron brings everything back. The watchdog also trims logs above 10MB by
+itself (disk full = crash). Verified: cron active (tested with a temporary
+line), full restart OK, URL change published and discovered by the live
+page.
 
 ### Using the NAS as engine in the page
 

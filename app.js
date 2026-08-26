@@ -260,31 +260,48 @@
   var nasChecking = false;
 
   /* rubrica dell'URL del NAS: nas-url.txt pubblicato dal NAS sul repo
-     GitHub (istantaneo, nessun worker: il NAS si riavvia, pubblica il
-     nuovo URL, la pagina lo legge). Se non risponde, si usa l'URL
-     incollato a mano. */
+     GitHub (il NAS si riavvia, pubblica il nuovo URL, la pagina lo legge).
+     Fonti in ordine:
+       1) raw.githubusercontent (istantaneo, subito dopo la pubblicazione)
+       2) stesso dominio su GitHub Pages (nessun CORS, nessuna dipendenza
+          da CDN esterni; in ritardo di ~1 min rispetto a raw per la build)
+     Se falliscono entrambe, si usa l'URL incollato a mano. */
   function refreshNas(force) {
     if (nasChecking) return;
     if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
     nasChecking = true;
     nasChecked = Date.now();
-    var x = new XMLHttpRequest();
-    x.open('GET', NAS_URL_FILE + '?t=' + Date.now(), true);
-    x.timeout = 8000;
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
+    function done(u) {
       nasChecking = false;
-      if (x.status >= 200 && x.status < 300) {
-        var t = String(x.responseText == null ? '' : x.responseText).trim();
-        nasUrl = /^https:\/\//.test(t) ? t : null;
-      } else {
-        nasUrl = null;
-      }
-      if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
-    };
-    x.onerror = function () { nasChecking = false; nasUrl = null; };
-    x.ontimeout = function () { nasChecking = false; nasUrl = null; };
-    x.send();
+      nasUrl = u;
+      if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(u);
+    }
+    function ask(url, cb) {
+      var x = new XMLHttpRequest();
+      x.open('GET', url, true);
+      x.timeout = 8000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        if (x.status >= 200 && x.status < 300) cb(x.responseText);
+        else cb(null);
+      };
+      x.onerror = function () { cb(null); };
+      x.ontimeout = function () { cb(null); };
+      x.send();
+    }
+    function goodUrl(txt) {
+      var t = String(txt == null ? '' : txt).trim();
+      return /^https:\/\//.test(t) ? t : null;
+    }
+    /* 1) raw (istantaneo) */
+    ask(NAS_URL_FILE + '?t=' + Date.now(), function (txt) {
+      var u = goodUrl(txt);
+      if (u) { done(u); return; }
+      /* 2) stesso dominio su GitHub Pages */
+      ask('nas-url.txt?t=' + Date.now(), function (txt2) {
+        done(goodUrl(txt2));
+      });
+    });
   }
 
   function engines() {
