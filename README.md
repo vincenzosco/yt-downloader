@@ -87,6 +87,58 @@ curl "https://xxx.workers.dev/search?q=test"
 curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
 ```
 
+## Self-host: engine sul NAS (IP residenziale)
+
+L'engine gira anche come **server Node su un NAS/VPS** con IP residenziale:
+YouTube flagga molto meno gli IP di casa che quelli dei datacenter
+(Cloudflare), quindi i formati audio completi (Opus/AAC) tornano disponibili
+anche quando il worker è in cooldown.
+
+Copia il progetto sul NAS (es. `/volume1/Download/yt-downloader`) e avvia:
+
+```bash
+bash server/start.sh
+```
+
+Lo script trova da solo il binario di Node (anche il pacchetto Synology
+`Node.js_v20`, che non è in PATH) e avvia in background, in modo persistente:
+
+1. l'**engine** su `http://localhost:8787` (log in `server.log`);
+2. il **tunnel pubblico** `cloudflared` → URL `https://….trycloudflare.com`
+   (gratis, senza account, senza port forwarding; log in
+   `server.log.cloudflared`). Se `cloudflared` manca, installalo con
+   `bash server/install-cloudflared.sh`.
+
+Per ritrovare l'URL pubblico in qualsiasi momento (cambia a ogni riavvio del
+tunnel):
+
+```bash
+curl http://<IP-NAS>:8787/tunnel-url
+# → {"tunnelUrl":"https://….trycloudflare.com","local":"http://…"}
+```
+
+### Avvio automatico al boot (Synology)
+
+```bash
+sudo cp server/S99ytd.sh /usr/local/etc/rc.d/S99ytd.sh
+sudo chmod +x /usr/local/etc/rc.d/S99ytd.sh
+# test manuale:
+sudo /usr/local/etc/rc.d/S99ytd.sh start   # avvia engine + tunnel
+sudo /usr/local/etc/rc.d/S99ytd.sh stop    # li ferma
+```
+
+Al riavvio del NAS l'engine e il tunnel ripartono da soli.
+
+### Usare il NAS come engine nella pagina
+
+Nella pagina, il campo “Engine URL” (ingranaggio in alto a destra) accetta
+l'URL del tunnel: incolla `https://….trycloudflare.com` e la pagina userà il
+NAS invece del worker. Il worker Cloudflare resta attivo come fallback.
+
+> **Nota**: con il tunnel gratuito `trycloudflare` l'URL cambia a ogni
+> riavvio del tunnel. Per un URL stabile serve un tunnel “named” (richiede
+> un account Cloudflare e un dominio).
+
 ## Sviluppo
 
 - `index.html`, `style.css`, `app.js` — pagina statica, JavaScript ES5
@@ -250,6 +302,57 @@ cd worker
 npx wrangler login
 npx wrangler deploy
 ```
+
+## Self-hosting: engine on your NAS (residential IP)
+
+The engine also runs as a **Node server on a NAS/VPS** with a residential
+IP: YouTube flags home IPs much less than datacenter ones (Cloudflare), so
+full audio formats (Opus/AAC) come back even when the worker is in cooldown.
+
+Copy the project to the NAS (e.g. `/volume1/Download/yt-downloader`) and run:
+
+```bash
+bash server/start.sh
+```
+
+The script finds the Node binary by itself (including the Synology package
+`Node.js_v20`, which is not in PATH) and starts, persistently, in background:
+
+1. the **engine** on `http://localhost:8787` (log in `server.log`);
+2. the **public tunnel** `cloudflared` → `https://….trycloudflare.com` URL
+   (free, no account, no port forwarding; log in `server.log.cloudflared`).
+   If `cloudflared` is missing, install it with
+   `bash server/install-cloudflared.sh`.
+
+To find the current public URL at any time (it changes on every tunnel
+restart):
+
+```bash
+curl http://<NAS-IP>:8787/tunnel-url
+# → {"tunnelUrl":"https://….trycloudflare.com","local":"http://…"}
+```
+
+### Auto-start at boot (Synology)
+
+```bash
+sudo cp server/S99ytd.sh /usr/local/etc/rc.d/S99ytd.sh
+sudo chmod +x /usr/local/etc/rc.d/S99ytd.sh
+# manual test:
+sudo /usr/local/etc/rc.d/S99ytd.sh start   # starts engine + tunnel
+sudo /usr/local/etc/rc.d/S99ytd.sh stop    # stops both
+```
+
+After a NAS reboot the engine and the tunnel start on their own.
+
+### Using the NAS as engine in the page
+
+In the page, the “Engine URL” field (gear icon, top right) accepts the
+tunnel URL: paste `https://….trycloudflare.com` and the page will use the
+NAS instead of the worker. The Cloudflare worker stays live as a fallback.
+
+> **Note**: with the free `trycloudflare` tunnel the URL changes on every
+> tunnel restart. For a stable URL you need a “named” tunnel (requires a
+> Cloudflare account and a domain).
 
 ### Local tests
 
