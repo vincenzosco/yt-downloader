@@ -102,14 +102,37 @@ const YT_HOSTS = [
   'https://youtubei.googleapis.com/youtubei/v1',
 ];
 
-// Versioni client allineate a yt-dlp (luglio 2026): versioni vecchie vengono
-// penalizzate da YouTube. web_embedded NON richiede PO token (vedi sotto).
+// Versioni client allineate a yt-dlp (luglio 2026). IMPORTANTE: con la nuova
+// enforcement di YouTube (token PO legati al video) la versione ANDROID
+// 21.26.364 risponde con i formati SENZA url; la versione precedente
+// (20.14.37) con lo stesso websafe PO token li restituisce ancora completi
+// (verificato empiricamente). VISIONOS dà gli audio-only senza alcun token.
+// Entrambi vengono provati per primi; le versioni nuove restano come ripiego.
 const UA_WEB =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const UA_ANDROID = 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip';
+const UA_ANDROID_OLD = 'com.google.android.youtube/20.14.37 (Linux; U; Android 11) gzip';
 const UA_IOS = 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)';
+const UA_VISIONOS =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
 
 export const CLIENT_WEB = { clientName: 'WEB', clientVersion: '2.20260708.00.00' };
+// Android 20.14.37: la versione che ancora restituisce gli url audio completi
+// con il websafe PO token anche quando la 21.x li toglie.
+export const CLIENT_ANDROID_OLD = {
+  clientName: 'ANDROID',
+  clientVersion: '20.14.37',
+  androidSdkVersion: 30,
+  userAgent: UA_ANDROID_OLD,
+};
+// VISIONOS (Apple Vision Pro): restituisce gli audio-only senza PO token.
+export const CLIENT_VISIONOS = {
+  clientName: 'VISIONOS',
+  clientVersion: '1.02',
+  deviceMake: 'Apple',
+  deviceModel: 'RealityDevice17,1',
+  userAgent: UA_VISIONOS,
+};
 // web_embedded: per la guida PO token di yt-dlp questo client NON richiede
 // alcun PO token (né per il player né per gli stream GVS). Limite: funziona
 // solo per i video embeddabili (la stragrande maggioranza); per gli altri
@@ -147,7 +170,8 @@ export async function innertube(path, clients, body) {
           const client = { ...raw };
           const thirdParty = client.thirdParty;
           delete client.thirdParty;
-          const ua = client.clientName === 'ANDROID' ? UA_ANDROID : client.clientName === 'IOS' ? UA_IOS : UA_WEB;
+          const ua = client.userAgent ||
+            (client.clientName === 'ANDROID' ? UA_ANDROID : client.clientName === 'IOS' ? UA_IOS : UA_WEB);
           const context = { client };
           if (thirdParty) context.thirdParty = thirdParty;
           const res = await fetch(YT_HOSTS[h] + path, {
@@ -402,11 +426,12 @@ async function doSearch(query) {
 
 /* ---------- audio ---------- */
 
-// android/ios danno i formati completi (audio-only inclusi) ma richiedono il
-// PO token; web_embedded non richiede alcun token ma restituisce solo 360p
-// progressive, quindi va provato come ULTIMA risorsa (stessa strategia di
-// yt-dlp), non come primo client.
-const CLIENTS_PLAYER = [CLIENT_ANDROID, CLIENT_IOS];
+// Ordine (verificato empiricamente, lug 2026): android 20.14.37 + PO token e
+// VISIONOS restituiscono gli audio-only con url anche con enforcement attiva;
+// le versioni nuove (21.26.364) spesso li restituiscono senza url. web_embedded
+// non richiede token ma dà solo 360p progressive: ultima risorsa.
+const CLIENTS_PLAYER = [CLIENT_ANDROID_OLD, CLIENT_VISIONOS, CLIENT_ANDROID, CLIENT_IOS];
+const NEEDS_PO = (c) => c.clientName !== 'VISIONOS';
 
 // visitorData fresco dalle pagine HTML (non challenge): aiuta a superare
 // i bot-challenge intermittenti di YouTube sugli IP di datacenter.
@@ -447,8 +472,10 @@ async function withClients(fn, pot) {
     }
     const clients = CLIENTS_PLAYER.map((c) => {
       const cl = { ...c };
-      if (vd) cl.visitorData = vd;
-      if (roundPot) cl.poToken = roundPot;
+      if (NEEDS_PO(c)) {
+        if (vd) cl.visitorData = vd;
+        if (roundPot) cl.poToken = roundPot;
+      }
       return cl;
     });
     for (let c = 0; c < clients.length; c++) {
@@ -524,10 +551,12 @@ function sanitizeName(name) {
 }
 
 /* rinfresco leggero dell'URL del formato (1 solo client, 1 giro): usato
-   solo se l'URL cachato risponde 403 (scaduto). Non fa i 3 giri pesanti. */
+   solo se l'URL cachato risponde 403 (scaduto). Non fa i 3 giri pesanti.
+   Usa android 20.14.37 (quello che restituisce gli url anche con
+   enforcement attiva). */
 async function refreshStreamUrl(id, itag) {
   const vd = await getVisitorData(true);
-  const client = vd ? { ...CLIENT_ANDROID, visitorData: vd } : { ...CLIENT_ANDROID };
+  const client = vd ? { ...CLIENT_ANDROID_OLD, visitorData: vd } : { ...CLIENT_ANDROID_OLD };
   try { client.poToken = await refreshPoToken(); } catch (e) { /* usa quello che c'e' */ }
   const data = await innertube('/player', [client], { videoId: id });
   const all = parsePlayerFormats(data).formats;
@@ -551,22 +580,27 @@ async function streamAudio(id, itag, request, pot) {
     throw err;
   }
 
-  const headers = { 'User-Agent': UA_ANDROID };
+  // L'URL googlevideo può pretendere lo UA del client che l'ha generato
+  // (android vecchio, visionos, android nuovo): provali in ordine.
+  const UA_CANDIDATES = [UA_ANDROID_OLD, UA_VISIONOS, UA_ANDROID];
   const range = request.headers.get('Range');
-  if (range) headers['Range'] = range;
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(match.url, { headers });
-      if (res.ok || res.status === 206) {
-        const out = new Response(res.body, res);
-        out.headers.set('Access-Control-Allow-Origin', '*');
-        out.headers.set('Content-Disposition', 'attachment; filename="' + base + '.' + extForMime(match.mime) + '"');
-        return out;
+    for (let u = 0; u < UA_CANDIDATES.length; u++) {
+      const headers = { 'User-Agent': UA_CANDIDATES[u] };
+      if (range) headers['Range'] = range;
+      try {
+        const res = await fetch(match.url, { headers });
+        if (res.ok || res.status === 206) {
+          const out = new Response(res.body, res);
+          out.headers.set('Access-Control-Allow-Origin', '*');
+          out.headers.set('Content-Disposition', 'attachment; filename="' + base + '.' + extForMime(match.mime) + '"');
+          return out;
+        }
+        lastErr = new Error('stream http ' + res.status);
+      } catch (e) {
+        lastErr = e;
       }
-      lastErr = new Error('stream http ' + res.status);
-    } catch (e) {
-      lastErr = e;
     }
     // URL cachato non valido: tenta un rinfresco leggero (1 chiamata) e ripeti
     if (attempt === 0) {

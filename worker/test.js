@@ -1,11 +1,12 @@
 // Verifica del worker contro dati reali di YouTube.
 // Uso: node worker/test.js  (richiede connessione; stesso flusso del worker)
 
-import { parseSearch, parsePlayer, parsePlaylist, CLIENT_WEB, CLIENT_ANDROID, CLIENT_EMBEDDED, innertube } from './index.js';
+import { parseSearch, parsePlayer, parsePlaylist, CLIENT_WEB, CLIENT_ANDROID, CLIENT_ANDROID_OLD, CLIENT_EMBEDDED, innertube } from './index.js';
 import { getPoToken } from './pot.js';
 
 const WEB = [CLIENT_WEB];
 const ANDROID = [CLIENT_ANDROID];
+const ANDROID_OLD = [CLIENT_ANDROID_OLD];
 const EMBED = [CLIENT_EMBEDDED];
 
 let failures = 0;
@@ -26,12 +27,12 @@ check('search restituisce risultati', results.length > 5, 'got ' + results.lengt
 check('primo risultato e Rick Astley', results[0] && results[0].id === 'dQw4w9WgXcQ', JSON.stringify(results[0] && results[0].id));
 check('search ha titolo/autore/durata/thumb', !!(results[0] && results[0].title && results[0].author && results[0].duration && results[0].thumb));
 
-// 2. player (formato audio). Percorso di produzione: android con PO token
-// (formati completi); se l'enforcement di YouTube toglie gli url (token non
-// legato al video), ripiega su web_embedded (nessun PO token, url sempre
-// presenti, solo 360p). Il test segue lo stesso ordine del worker.
+// 2. player (formato audio). Percorso di produzione: android 20.14.37 con PO
+// token (restituisce gli url audio anche con enforcement attiva); se
+// l'enforcement toglie gli url, ripiega su web_embedded. Stesso ordine del
+// worker.
 const _pot = await getPoToken();
-const playerClients = _pot ? [{ ...CLIENT_ANDROID, poToken: _pot }] : EMBED;
+const playerClients = _pot ? [{ ...CLIENT_ANDROID_OLD, poToken: _pot }] : EMBED;
 let p = await innertube('/player', playerClients, { videoId: 'dQw4w9WgXcQ' });
 let info = parsePlayer(p);
 check('player: titolo corretto', /Never Gonna/i.test(info.title || ''), info.title);

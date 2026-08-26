@@ -123,15 +123,15 @@ cd worker && node proxy-test.mjs
   con single-flight (le richieste concorrenti per lo stesso video aspettano
   una sola chiamata a YouTube) e **serializza** tutte le chiamate a YouTube
   (mai più di una alla volta: le raffiche fanno scattare il flag).
-- **Strategia client (allineata a yt-dlp, lug 2026)**: versioni client
-  aggiornate (`ANDROID 21.26.364`, `IOS 21.26.4`, `WEB 2.20260708`). Prima
-  si provano android/ios con PO token + `visitorData` fresco (formati
-  completi, audio-only inclusi); se falliscono o YouTube toglie gli url dai
-  formati (nuova enforcement, token generici non più legati al video),
-  l'ultima risorsa è `web_embedded` (`WEB_EMBEDDED_PLAYER` con
-  `thirdParty.embedUrl`), che **non richiede alcun PO token** e garantisce
-  almeno il 360p progressivo (itag 18) scaricabile. `android_vr` è evitato:
-  YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
+- **Strategia client (allineata a yt-dlp, lug 2026)**: con la nuova
+  enforcement di YouTube (PO token legati al video) la versione `ANDROID`
+  21.26.364 risponde spesso con i formati **senza url**. Verificato
+  empiricamente, due client continuano a restituire gli audio-only completi:
+  **`ANDROID 20.14.37` + PO token** (primo tentativo) e **`VISIONOS`**
+  (senza token). Poi vengono provate le versioni nuove (`ANDROID 21.26.364`,
+  `IOS 21.26.4`) e infine `web_embedded` (nessun PO token, ma solo 360p
+  progressivo itag 18) come ultima risorsa scaricabile. `android_vr` è
+  evitato: YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
 - **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
   il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
   a ogni blocco) risponde subito `{ retryAfter }`; il frontend mostra un
@@ -284,15 +284,15 @@ cd worker && node proxy-test.mjs
   lists do not route YouTube traffic: they stay available as infrastructure
   for a possible external engine. Also, free proxies are almost all
   datacenter IPs — the very category YouTube flags.
-- **Client strategy (aligned with yt-dlp, Jul 2026)**: up-to-date client
-  versions (`ANDROID 21.26.364`, `IOS 21.26.4`, `WEB 2.20260708`). First it
-  tries android/ios with PO token + fresh `visitorData` (full formats,
-  audio-only included); if they fail or YouTube strips the urls from the
-  formats (new enforcement — generic tokens are no longer video-bound), the
-  last resort is `web_embedded` (`WEB_EMBEDDED_PLAYER` with
-  `thirdParty.embedUrl`), which needs **no PO token at all** and guarantees
-  a downloadable 360p progressive (itag 18). `android_vr` is avoided:
-  YouTube broke it on 2026-08-17 (403 on all formats).
+- **Client strategy (aligned with yt-dlp, Jul 2026)**: with YouTube's new
+  enforcement (video-bound PO tokens), the `ANDROID` 21.26.364 client often
+  returns formats **without urls**. Verified empirically, two clients still
+  return the full audio-only formats: **`ANDROID 20.14.37` + PO token**
+  (first try) and **`VISIONOS`** (no token). Then the new versions
+  (`ANDROID 21.26.364`, `IOS 21.26.4`) are tried, and finally `web_embedded`
+  (no PO token, but only 360p progressive itag 18) as the last downloadable
+  resort. `android_vr` is avoided: YouTube broke it on 2026-08-17 (403 on
+  all formats).
 - **Multi-select → .zip**: tick songs with the checkboxes (from one or more
   searches — the selection stays while you search more) and download them all
   as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
