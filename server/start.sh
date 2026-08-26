@@ -9,6 +9,14 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8787}"
 LOG="$DIR/server.log"
 
+# screen (Entware su Synology: /opt/sbin/screen): l'engine gira in una
+# sessione screen staccata, sopravvive a SSH e riavvii del terminale.
+SCREEN="$(command -v screen 2>/dev/null || true)"
+if [ -z "$SCREEN" ]; then SCREEN="/opt/sbin/screen"; fi
+SCREENDIR="$DIR/.screen"
+mkdir -p "$SCREENDIR" 2>/dev/null && chmod 700 "$SCREENDIR" 2>/dev/null || true
+screen_in() { SCREENDIR="$SCREENDIR" "$SCREEN" -ls 2>/dev/null | grep -q "$1"; }
+
 # Config opzionale (secret della registrazione NAS, worker di riferimento):
 #   server/.env  con  NAS_REGISTER_KEY=...  e  REGISTER_WORKER=https://...
 ENVF="$DIR/server/.env"
@@ -31,14 +39,14 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 
-# 1) engine node (processo persistente: sopravvive alla chiusura della SSH)
-#    [.] evita che is_running matchi la riga di comando di start.sh stessa
-if ! is_running "server/index[.]js"; then
+# 1) engine node in sessione screen staccata (sopravvive alla SSH)
+if ! screen_in "\.ytd\b"; then
   cd "$DIR"
-  setsid nohup env REGISTER_WORKER="${REGISTER_WORKER:-}" NAS_REGISTER_KEY="${NAS_REGISTER_KEY:-}" "$NODE" server/index.js >> "$LOG" 2>&1 &
-  echo "engine avviato su porta $PORT — log: $LOG"
+  SCREENDIR="$SCREENDIR" "$SCREEN" -dmS ytd -L -Logfile "$LOG.screen" \
+    env REGISTER_WORKER="${REGISTER_WORKER:-}" NAS_REGISTER_KEY="${NAS_REGISTER_KEY:-}" "$NODE" server/index.js
+  echo "engine avviato su porta $PORT (screen ytd) — log: $LOG.screen"
 else
-  echo "engine già attivo"
+  echo "engine già attivo (screen ytd)"
 fi
 
 # 2) tunnel pubblico cloudflared (senza account, senza port forwarding)
@@ -47,10 +55,14 @@ if [ ! -x "$CF" ]; then
   echo "cloudflared non trovato: installalo con  bash server/install-cloudflared.sh"
   exit 0
 fi
-if is_running "cloudflared tunnel --url"; then
+if screen_in "\.cloudflared\b"; then
+  echo "tunnel già attivo (screen cloudflared)"
+elif is_running "cloudflared tunnel --url"; then
   echo "tunnel già attivo"
 else
-  setsid nohup "$CF" tunnel --url "http://localhost:$PORT" --no-autoupdate >> "$LOG.cloudflared" 2>&1 &
-  echo "tunnel in avvio… attendi 5-10s poi guarda $LOG.cloudflared"
-  echo "  tail -f \"$LOG.cloudflared\"   # l'URL è https://….trycloudflare.com"
+  cd "$DIR"
+  SCREENDIR="$SCREENDIR" "$SCREEN" -dmS cloudflared -L -Logfile "$LOG.cloudflared.screen" \
+    "$CF" tunnel --url "http://localhost:$PORT" --no-autoupdate
+  echo "tunnel in avvio (screen cloudflared)… attendi 5-10s poi guarda $LOG.cloudflared.screen"
+  echo "  tail -f \"$LOG.cloudflared.screen\"   # l'URL è https://….trycloudflare.com"
 fi

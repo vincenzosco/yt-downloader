@@ -104,13 +104,22 @@ bash server/start.sh
 ```
 
 Lo script trova da solo il binario di Node (anche il pacchetto Synology
-`Node.js_v20`, che non è in PATH) e avvia in background, in modo persistente:
+`Node.js_v20`, che non è in PATH) e avvia in background, in modo persistente,
+dentro **sessioni screen** (Entware: `/opt/sbin/screen`, installabile con
+`opkg install screen`):
 
-1. l'**engine** su `http://localhost:8787` (log in `server.log`);
-2. il **tunnel pubblico** `cloudflared` → URL `https://….trycloudflare.com`
-   (gratis, senza account, senza port forwarding; log in
-   `server.log.cloudflared`). Se `cloudflared` manca, installalo con
+1. l'**engine** su `http://localhost:8787` in una sessione screen `ytd`
+   (log in `server.log.screen`; allegati: `screen -r ytd`);
+2. il **tunnel pubblico** `cloudflared` in una sessione screen
+   `cloudflared` → URL `https://….trycloudflare.com` (gratis, senza account,
+   senza port forwarding; log in `server.log.cloudflared.screen`).
+   Se `cloudflared` manca, installalo con
    `bash server/install-cloudflared.sh`.
+
+Le sessioni screen sopravvivono alla chiusura della SSH (più robuste di
+`setsid nohup`). Per gestirle: `screen -r ytd` (o `-r cloudflared`) per
+agganciarsi, `Ctrl-a d` per staccarsi; `SCREENDIR=<dir>/.screen` serve se la
+home utente non esiste (tipico di Synology).
 
 Per ritrovare l'URL pubblico in qualsiasi momento (cambia a ogni riavvio del
 tunnel):
@@ -348,13 +357,21 @@ bash server/start.sh
 ```
 
 The script finds the Node binary by itself (including the Synology package
-`Node.js_v20`, which is not in PATH) and starts, persistently, in background:
+`Node.js_v20`, which is not in PATH) and starts, persistently, in background,
+inside **screen sessions** (Entware: `/opt/sbin/screen`, install with
+`opkg install screen`):
 
-1. the **engine** on `http://localhost:8787` (log in `server.log`);
-2. the **public tunnel** `cloudflared` → `https://….trycloudflare.com` URL
-   (free, no account, no port forwarding; log in `server.log.cloudflared`).
-   If `cloudflared` is missing, install it with
-   `bash server/install-cloudflared.sh`.
+1. the **engine** on `http://localhost:8787` in a screen session `ytd`
+   (log in `server.log.screen`; attach with `screen -r ytd`);
+2. the **public tunnel** `cloudflared` in a screen session `cloudflared`
+   → `https://….trycloudflare.com` URL (free, no account, no port
+   forwarding; log in `server.log.cloudflared.screen`). If `cloudflared` is
+   missing, install it with `bash server/install-cloudflared.sh`.
+
+The screen sessions survive SSH disconnects (more robust than
+`setsid nohup`). To manage them: `screen -r ytd` (or `-r cloudflared`) to
+attach, `Ctrl-a d` to detach; `SCREENDIR=<dir>/.screen` is needed when the
+user home does not exist (typical on Synology).
 
 To find the current public URL at any time (it changes on every tunnel
 restart):
