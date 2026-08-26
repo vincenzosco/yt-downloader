@@ -2,11 +2,12 @@
 (function () {
   'use strict';
 
-  /* URL dell'engine (worker Cloudflare). Impostato dopo il deploy;
-     l'utente puo' cambiarlo dal footer ("cambia"). */
-
-  var ENGINE_CLOUDFLARE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
-  var ENGINE_CLOUDFLARE2 = 'https://yt-downloader2.scopacasa-vincenzo432.workers.dev';
+  /* La pagina usa SOLO il NAS self-host come engine: l'URL del tunnel
+     trycloudflare (https, funziona anche dalla pagina https di GitHub
+     Pages) o un URL custom incollato dall'utente. Il worker Cloudflare
+     serve esclusivamente come rubrica best-effort per la discovery del
+     NAS (/nas): se il worker non c'e' (rimosso), si incolla l'URL a mano. */
+  var ENGINE_DISCOVERY = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
   var ENGINE_KEY = 'ytd.engine';
   var LAST_GOOD_KEY = 'ytd.lastGood';
 
@@ -60,7 +61,7 @@
       'opt-audio-best': 'Audio Opus (migliore)',
       'opt-audio-light': 'Audio leggero',
       'no-save-support': 'Il tuo browser non supporta il salvataggio diretto: apri il link e salva con \u201csalva con nome\u201d.',
-      'engine-change-prompt': 'URL del worker (engine). Es.: https://yt-downloader.xxxx.workers.dev',
+      'engine-change-prompt': 'URL del NAS (engine). Es.: https://xxx.trycloudflare.com — lascia vuoto per l\u2019auto-discovery.',
       'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
       'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
@@ -124,7 +125,7 @@
       'opt-audio-best': 'Audio Opus (best)',
       'opt-audio-light': 'Light audio',
       'no-save-support': 'Your browser does not support direct saving: open the link and save with \u201csave as\u201d.',
-      'engine-change-prompt': 'Worker (engine) URL. E.g.: https://yt-downloader.xxxx.workers.dev',
+      'engine-change-prompt': 'NAS (engine) URL. E.g.: https://xxx.trycloudflare.com — leave empty for auto-discovery.',
       'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
       'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
@@ -241,7 +242,13 @@
 
   function engineUrl() {
     var v = storageGet(ENGINE_KEY);
-    return (v && v.length) ? v : ENGINE_CLOUDFLARE;
+    return (v && v.length) ? v : '';
+  }
+
+  /* l'engine migliore per anteprime/stream diretti: quello che ha appena
+     funzionato, altrimenti quello incollato, altrimenti il NAS scoperto */
+  function bestEngine() {
+    return storageGet(LAST_GOOD_KEY) || engineUrl() || nasUrl || '';
   }
 
   /* elenco ordinato di engine da provare: custom > NAS (auto) > Cloudflare */
@@ -250,40 +257,32 @@
   var nasChecked = 0;
   var nasChecking = false;
 
-  /* chiede al worker l'URL corrente del NAS self-host. Se il worker non
-     risponde (o non c'e' un NAS registrato) nasUrl resta null e si usa il
-     worker come prima. */
+  /* chiede al worker l'URL corrente del NAS self-host (best-effort): il
+     NAS continua a registrarsi "sempre e comunque"; se il worker c'e' la
+     pagina trova il NAS da sola, se non c'e' (rimosso) il fallimento e'
+     silenzioso e si usa l'URL incollato a mano. */
   function refreshNas(force) {
     if (nasChecking) return;
     if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
     nasChecking = true;
     nasChecked = Date.now();
-    /* chiede prima a worker1; se non risponde prova worker2 (ridondanza) */
-    var tried = 0;
-    var urls = [ENGINE_CLOUDFLARE, ENGINE_CLOUDFLARE2];
-    (function one() {
-      if (tried >= urls.length) { nasChecking = false; return; }
-      var base = urls[tried++];
-      var x = new XMLHttpRequest();
-      x.open('GET', base + '/nas?t=' + Date.now(), true);
-      x.timeout = 8000;
-      x.onreadystatechange = function () {
-        if (x.readyState !== 4) return;
-        if (x.status >= 200 && x.status < 300) {
-          try {
-            var d = JSON.parse(x.responseText);
-            nasUrl = (d && d.url) ? d.url : null;
-          } catch (e) { nasUrl = null; }
-          nasChecking = false;
-          if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
-          return;
-        }
-        one();
-      };
-      x.onerror = function () { one(); };
-      x.ontimeout = function () { one(); };
-      x.send();
-    })();
+    var x = new XMLHttpRequest();
+    x.open('GET', ENGINE_DISCOVERY + '/nas?t=' + Date.now(), true);
+    x.timeout = 8000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      nasChecking = false;
+      if (x.status >= 200 && x.status < 300) {
+        try {
+          var d = JSON.parse(x.responseText);
+          nasUrl = (d && d.url) ? d.url : null;
+        } catch (e) { nasUrl = null; }
+        if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
+      }
+    };
+    x.onerror = function () { nasChecking = false; };
+    x.ontimeout = function () { nasChecking = false; };
+    x.send();
   }
 
   function engines() {
@@ -291,14 +290,14 @@
     var custom = storageGet(ENGINE_KEY);
     if (custom) {
       // un custom trycloudflare vecchio (tunnel morto) è peggio di niente:
-      // lo si prova solo se è lo stesso URL che il NAS sta registrando ora
-      if (custom.indexOf('trycloudflare.com') === -1 || (nasUrl && custom === nasUrl)) {
+      // lo si ignora solo se sappiamo qual è l'URL attuale del NAS e non
+      // coincide; senza discovery (worker assente) l'URL incollato è l'unico
+      // modo per puntare al NAS, quindi va accettato.
+      if (!(nasUrl && custom.indexOf('trycloudflare.com') !== -1 && custom !== nasUrl)) {
         list.push(custom);
       }
     }
     if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
-    if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
-    if (list.indexOf(ENGINE_CLOUDFLARE2) === -1) list.push(ENGINE_CLOUDFLARE2);
     /* l'ultimo engine che ha funzionato va provato per primo: converge
        sull'engine sano e non spreca tentativi su quello giù */
     var good = storageGet(LAST_GOOD_KEY);
@@ -326,12 +325,13 @@
     return m ? parseInt(m[1], 10) : 0;
   }
 
-  /* nome breve dell'engine per i messaggi di errore (NAS/worker/custom) */
+  /* nome breve dell'engine per i messaggi di errore (NAS/custom) */
   function engineLabel(u) {
     if (!u) return '?';
     if (u.indexOf('trycloudflare.com') !== -1) return 'NAS';
-    if (u.indexOf('workers.dev') !== -1) return (u === ENGINE_CLOUDFLARE2) ? 'worker 2' : 'worker';
-    return u.replace(/^https?:\/\//, '').split('/')[0].split('.')[0] || 'engine';
+    var host = u.replace(/^https?:\/\//, '').split('/')[0];
+    if (/^\d/.test(host)) return 'NAS (LAN)';
+    return host.split('.')[0] || 'engine';
   }
 
   /* chiama un endpoint JSON con fallback su piu' engine */
@@ -615,7 +615,7 @@
       var audio = document.createElement('audio');
       audio.controls = true;
       audio.preload = 'none';
-      audio.src = engineUrl() + '/stream?id=' + encodeURIComponent(item.id);
+      audio.src = bestEngine() + '/stream?id=' + encodeURIComponent(item.id);
       p.appendChild(audio);
       row.appendChild(p);
       btn.textContent = '\u25A0';
@@ -1177,7 +1177,7 @@
   }
 
   function openVideo(vid) {
-    var engine = engineUrl();
+    var engine = bestEngine();
     var box = $('link-preview');
     var card = buildCard(thumbFor(vid), '\u2026', '\u2026', '', null);
     box.appendChild(card);
@@ -1433,8 +1433,9 @@
     bindEngineChange();
     bindSelTray();
     renderVersion();
-    /* discovery automatico del NAS self-host (l'URL del tunnel cambia a ogni
-       riavvio: la pagina lo chiede al worker, che lo riceve dal NAS) */
+    /* discovery best-effort del NAS self-host (l'URL del tunnel cambia a
+       ogni riavvio: la pagina lo chiede al worker, che lo riceve dal NAS;
+       senza worker si incolla l'URL a mano dal footer) */
     window.__ytdOnNas = function (u) {
       nasUrl = u;
       renderEngineUrl();

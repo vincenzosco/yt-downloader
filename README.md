@@ -39,9 +39,9 @@ browser (pagina statica su GitHub Pages)
    │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
    │  chiamate all'engine (CORS *)
    ▼
-engine: 2 Cloudflare Worker ridondanti (gratis) o NAS self-host (IP
-   residenziale, scoperto automaticamente via /nas; la pagina prova
-   custom → NAS → worker 1 → worker 2, ultimo-funzionante per primo)
+engine: NAS self-host (unico engine; la pagina prova custom → NAS,
+   ultimo-funzionante per primo). Il worker Cloudflare è SOLO una rubrica
+   best-effort per la discovery (/nas): senza worker si incolla l'URL a mano
    │  API Innertube lato server, senza Origin, retry su più host/client
    │  PO token (anti-bot) generato dentro l'engine
    ▼
@@ -74,25 +74,22 @@ con:
 bash tools/bump.sh
 ```
 
-## Deploy
+## Deploy (facoltativo: solo per la discovery del NAS)
 
-Servono solo l'account Cloudflare già in uso (unico account per tutto).
+La pagina **funziona senza Cloudflare**: l'engine è il NAS, raggiunto via
+tunnel (https) o con un URL incollato a mano. Il worker serve solo come
+rubrica best-effort: se è attivo, la pagina trova da sola l'URL corrente
+del NAS (che cambia a ogni riavvio del tunnel); se non c'è, si incolla
+l'URL nel footer ("cambia"). Il NAS continua a registrarsi "sempre e
+comunque" (heartbeat ogni 60s), quindi se un giorno riattivi il worker
+tutto si auto-configura da solo.
 
 ```bash
 cd worker
 npx wrangler login
-npx wrangler deploy
+npx wrangler deploy            # opzionale: rubrica /nas
+npx wrangler deploy --name yt-downloader2   # opzionale: solo ridondanza rubrica
 ```
-
-**Ridondanza (consigliata)**: per un secondo worker con IP di uscita
-indipendenti (se YouTube flagga l'IP di uno, l'altro passa):
-
-```bash
-npx wrangler deploy --name yt-downloader2
-```
-
-La pagina lo usa automaticamente come ultimo engine di riserva; il secondo
-worker ha backoff e cache indipendenti (in memoria, per istanza).
 
 Test rapido:
 
@@ -158,20 +155,28 @@ Al riavvio del NAS l'engine, il tunnel e il watchdog ripartono da soli
 (`S99` = eseguito tra gli ultimi al boot, quando la rete è pronta; con
 retry automatico se il volume non è ancora montato).
 
-### Usare il NAS come engine nella pagina (automatico)
+### Usare il NAS come engine nella pagina
 
-La pagina **usa il NAS da sola**, senza incollare nulla:
+La pagina usa **solo il NAS** come engine:
 
-1. il NAS registra ogni 60 secondi il suo URL pubblico corrente sul worker
-   Cloudflare (`POST /register`, protetto da chiave) — così il worker sa
-   sempre dove raggiungerlo, anche quando il tunnel cambia URL;
-2. all'avvio la pagina chiede al worker `GET /nas` e, se c'è un NAS
-   registrato, lo mette **in cima** agli engine (ordine: engine custom →
-   NAS → worker 1 → worker 2), con ricontrollo ogni 5 minuti;
-3. se un engine non risponde (o è in backoff anti-bot), la pagina **passa
-   subito al successivo** senza attendere — aspetta solo se sono bloccati
-   tutti; l'ultimo engine che ha funzionato viene provato per primo la
-   volta dopo (memoria in `localStorage`).
+1. il NAS registra ogni 60 secondi il suo URL pubblico corrente (`POST
+   /register` sul worker, protetto da chiave) — "si registra sempre e
+   comunque": se il worker c'è, la pagina trova il NAS da sola (`GET
+   /nas`, ricontrollo ogni 5 minuti); se non c'è, nessun problema, si usa
+   l'URL incollato a mano;
+2. engine disponibili: quello incollato nel footer ("cambia") e il NAS
+   scoperto; l'ultimo che ha funzionato viene provato per primo (memoria
+   in `localStorage`);
+3. se il NAS è in backoff anti-bot la pagina ritenta da sola (fino a 5
+   cicli, attesa limitata a 90s ciascuno).
+
+> **Nota (mixed content)**: la pagina su GitHub Pages è HTTPS, quindi può
+> raggiungere il NAS solo via HTTPS — cioè l'URL del tunnel
+> `trycloudflare.com`. L'IP LAN (`http://192.168.0.108:8787`) funziona
+> solo se apri la pagina via HTTP (es. servendola dal NAS stesso); da
+> GitHub Pages il browser lo blocca. Quando il tunnel cambia URL (a ogni
+> riavvio del NAS), con il worker attivo la pagina si aggiorna da sola,
+> altrimenti incolli il nuovo URL nel footer.
 
 Configurazione (una tantum, sul NAS e sul worker):
 
@@ -256,14 +261,13 @@ cd worker && node proxy-test.mjs
   progressivo itag 18) come ultima risorsa scaricabile. `android_vr` è
   evitato: YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
 - **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
-  il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
+  l'engine smette di martellare YouTube e per un po' (90s → 10min, raddoppia
   a ogni blocco) risponde subito `{ retryAfter }`; il frontend **non aspetta
-  subito**: quando un engine è in backoff passa subito agli altri (NAS,
-  worker 2 — potrebbero non essere bloccati) e aspetta solo se sono bloccati
-  tutti: fino a 5 cicli, ognuno con attesa limitata a 90s. Ogni tentativo
-  può cadere su un'istanza del worker non bloccata (backoff in memoria per
-  istanza). Anche il singolo engine viene ritentato fino a 6 volte con
-  backoff esponenziale (1.5s → 20s) prima di passare al successivo.
+  subito**: se ci sono più engine (custom + NAS) passa al successivo e
+  aspetta solo se sono bloccati tutti: fino a 5 cicli, ognuno con attesa
+  limitata a 90s. Con un solo engine (NAS) i tentativi si ripetono con
+  backoff esponenziale: il singolo engine viene ritentato fino a 6 volte
+  (1.5s → 20s) e l'intera sequenza fino a 5 volte.
 - **Stream leggero**: `/stream` non rifà le chiamate pesanti a YouTube:
   riusa i formati già cachati da `/formats` (stesso IP del worker, gli URL
   googlevideo restano validi) e scarica direttamente l'URL. Se l'URL cachato
@@ -358,25 +362,22 @@ bypass the browser cache. **Before every commit** bump the version with:
 bash tools/bump.sh
 ```
 
-## Deploy
+## Deploy (optional: NAS discovery only)
 
-Only the Cloudflare account already in use is required (single account).
+The page **works without Cloudflare**: the engine is the NAS, reached via
+its HTTPS tunnel or a manually pasted URL. The worker only acts as a
+best-effort registry: if it is up, the page finds the current NAS URL by
+itself (it changes on every tunnel restart); if it is gone, you paste the
+URL in the footer (“change”). The NAS keeps registering “always anyway”
+(heartbeat every 60s), so if you ever re-enable the worker everything
+re-configures itself.
 
 ```bash
 cd worker
 npx wrangler login
-npx wrangler deploy
+npx wrangler deploy            # optional: /nas registry
+npx wrangler deploy --name yt-downloader2   # optional: registry redundancy only
 ```
-
-**Redundancy (recommended)**: a second worker with independent egress IPs
-(if YouTube flags one IP, the other still works):
-
-```bash
-npx wrangler deploy --name yt-downloader2
-```
-
-The page uses it automatically as the last fallback engine; it has
-independent in-memory backoff and cache.
 
 ## Self-hosting: engine on your NAS (residential IP)
 
@@ -433,20 +434,27 @@ After a NAS reboot the engine, the tunnel and the watchdog start on their
 own (`S99` = run among the last at boot, when the network is ready; with
 automatic retry if the volume is not mounted yet).
 
-### Using the NAS as engine in the page (automatic)
+### Using the NAS as engine in the page
 
-The page **uses the NAS by itself**, nothing to paste:
+The page uses **only the NAS** as engine:
 
-1. the NAS registers its current public URL on the Cloudflare worker every
-   60 seconds (`POST /register`, key-protected) — the worker always knows
-   where to reach it, even when the tunnel URL changes;
-2. on load the page asks the worker `GET /nas` and, if a NAS is
-   registered, puts it **on top** of the engine list (order: custom engine →
-   NAS → worker 1 → worker 2), re-checking every 5 minutes;
-3. if an engine does not answer (or is in anti-bot backoff), the page
-   **moves on to the next one immediately** — it only waits when all are
-   blocked; the last engine that worked is tried first next time
-   (remembered in `localStorage`).
+1. the NAS registers its current public URL every 60 seconds (`POST
+   /register` on the worker, key-protected) — it “always registers anyway”:
+   if the worker is up, the page finds the NAS by itself (`GET /nas`,
+   re-check every 5 minutes); if not, no problem, the pasted URL is used;
+2. available engines: the one pasted in the footer (“change”) and the
+   discovered NAS; the last one that worked is tried first next time
+   (remembered in `localStorage`);
+3. if the NAS is in anti-bot backoff the page retries by itself (up to 5
+   cycles, each wait capped at 90s).
+
+> **Note (mixed content)**: the page on GitHub Pages is HTTPS, so it can
+> reach the NAS only over HTTPS — i.e. the `trycloudflare.com` tunnel URL.
+> The LAN IP (`http://192.168.0.108:8787`) works only if you open the page
+> over HTTP (e.g. served from the NAS itself); from GitHub Pages the
+> browser blocks it. When the tunnel changes URL (on every NAS restart),
+> with the worker up the page updates by itself, otherwise you paste the
+> new URL in the footer.
 
 One-time setup (on the NAS and the worker):
 
@@ -515,14 +523,13 @@ cd worker && node proxy-test.mjs
   wait for a single YouTube call) and **serializes** every YouTube call
   (never more than one at a time — bursts trigger the flag).
 - **Anti-bot backoff**: when all routes fail with `LOGIN_REQUIRED`, the
-  worker stops hammering YouTube and for a while (90s → 10min, doubling each
+  engine stops hammering YouTube and for a while (90s → 10min, doubling each
   block) answers immediately with `{ retryAfter }`; the frontend **does not
-  wait right away**: when one engine is in backoff it moves on to the others
-  (NAS, worker 2 — they may not be blocked) and only waits when all are:
-  up to 5 cycles, each wait capped at 90s. Every attempt may land on a
-  different, unblocked worker instance (backoff is per-instance in memory).
-  A single engine is also retried up to 6 times with exponential backoff
-  (1.5s → 20s) before falling through to the next one.
+  wait right away**: with multiple engines (custom + NAS) it moves to the
+  next one and only waits when all are blocked: up to 5 cycles, each wait
+  capped at 90s. With a single engine (NAS) attempts repeat with
+  exponential backoff: each engine is retried up to 6 times (1.5s → 20s)
+  and the whole sequence up to 5 times.
 - **Light stream**: `/stream` does not redo the heavy YouTube calls: it
   reuses the formats already cached by `/formats` (same worker IP, so
   googlevideo URLs stay valid) and downloads the URL directly. If the cached
