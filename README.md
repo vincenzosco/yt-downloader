@@ -1,6 +1,8 @@
 # ytd.
 
-YouTube downloader — minimale, su GitHub Pages. Cerca una canzone o incolla un link (video o playlist): anteprima titolo e copertina, download audio.
+YouTube downloader — minimale, su GitHub Pages, **senza alcun server dietro**.
+Cerca una canzone o incolla un link (video o playlist): anteprima titolo e
+copertina, download audio/video con scelta di qualità.
 
 Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
@@ -8,322 +10,101 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 ## Funzioni
 
-- **Cerca** — risultati con copertina, titolo, autore, durata e anteprima audio (▶).
+- **Cerca** — risultati con copertina, titolo, autore, durata, visualizzazioni
+  e anteprima audio (▶).
 - **Incolla link** — video o playlist: card con titolo e copertina, elenco tracce.
-- **Selettore qualità** — su ogni pulsante “Scarica”: scegli formato e qualità tra
-  Audio (AAC/Opus con bitrate), Video con audio (360p progressivo) e Video solo
-  video (720p–1080p+). Ogni opzione mostra la dimensione stimata.
-- **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce, con qualità audio
-  scelta (AAC consigliato / Opus migliore / leggero).
+- **Selettore qualità** — su ogni pulsante “Scarica”: scegli formato e qualità
+  (Audio se disponibile, Video con audio, Video solo video). Ogni opzione
+  mostra la dimensione stimata.
+- **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce.
 - **Selezione multipla → .zip** — spunta le canzoni con le checkbox (da una o
   più ricerche, la selezione resta mentre cerchi altro) e scarica tutto in un
   unico `ytd-AAAA-MM-GG.zip`: download in sequenza con progress, nomi file dal
   titolo con estensione giusta, le canzoni che falliscono non bloccano il lotto.
 - **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
-- **Scarica sempre disponibile** — il pulsante Download compare subito, anche
-  se il dettaglio video (`/info`) è temporaneamente bloccato da YouTube;
-  `/info` serve solo per durata e titolo, non blocca mai il download.
-- **Errori chiari** — i messaggi di errore riportano il motivo reale (es.
-  anti-bot, download interrotto) invece di generici “all engines failed”.
 - **Barre di progresso** — ogni download (singolo, “Scarica tutte” e batch
-  .zip) mostra una barra rossa che avanza con i byte ricevuti.
-- **Anti-bot** — l'engine genera via token PO e ritenta da solo se YouTube
-  chiede “sign in to confirm you're not a bot” (vedi Note).
+  .zip) mostra una barra che avanza con i byte ricevuti.
+- **Auto-update** — quando il repo viene aggiornato, la pagina si ricarica da
+  sola (banner “Ricarica” se c'è un download in corso).
 
-## Come funziona
+## Come funziona — zero server
 
-GitHub Pages (statico) + engine sul NAS (server Node sul tuo NAS, IP
-residenziale). YouTube blocca le chiamate con header `Origin` (il browser
-non può chiamare direttamente le API interne). L'engine le chiama lato
-server, senza `Origin`.
+La pagina è **statica al 100%** (GitHub Pages) e parla **direttamente dal
+browser** con le **API pubbliche di Piped** (gratis, senza account, CORS
+permissivo). Non c'è un tuo server, non serve configurare nulla:
 
 ```
 browser (pagina statica su GitHub Pages)
-   │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
-   │  chiamate all'engine (CORS *)
+   │  richieste dirette (CORS *) alle API pubbliche di Piped
    ▼
-engine: NAS self-host (unico engine; la pagina prova custom → NAS,
-   ultimo-funzionante per primo). L'URL del NAS è pubblicato su GitHub
-   (nas-url.txt): la pagina lo legge direttamente, senza worker Cloudflare
-   │  API Innertube lato server, senza Origin, retry su più host/client
-   │  PO token (anti-bot) generato dentro l'engine
+istanza Piped pubblica → YouTube → URL audio/video
+   │  i byte scendono diretti al browser (proxy CORS di Piped)
    ▼
-YouTube → URL audio/video → l'engine lo streama al browser → download
+download
 ```
 
-### Endpoint dell'engine (`worker/index.js`)
+Le istanze pubbliche vengono **bloccate/cambiate da YouTube in modo
+intermittente** (anti-bot). La pagina gestisce da sola la cosa:
 
-| Endpoint           | Descrizione                                      |
-|--------------------|--------------------------------------------------|
-| `/search?q=…`      | ricerca (titolo, autore, durata, copertina)     |
-| `/info?id=…`       | dettagli video + audio preferito                 |
-| `/formats?id=…`    | tutti i formati (audio, progressive, video-only) |
-| `/playlist?list=…` | elenco tracce di una playlist                    |
-| `/stream?id=…&itag=…` | stream del file (CORS, Range), itag opzionale |
-| `/proxies`             | check di salute delle 5 liste proxy pubbliche |
-| `/register` (POST)     | il NAS self-host registra il suo URL pubblico (chiave) |
-| `/nas`                 | la pagina scopre l'URL corrente del NAS         |
+- tiene un **pool di istanze** e le **verifica** (health check) ogni 5 minuti,
+  usando la prima viva (ricordata in `localStorage` per ripartire subito);
+- se un'istanza fallisce, la scarta e **passa alle altre in automatico**;
+- quando YouTube blocca l'istanza (“Sign in to confirm you're not a bot”),
+  la pagina **riprova da sola** con attese crescenti e mostra un messaggio
+  chiaro se il blocco persiste: basta riprovare tra qualche minuto.
 
-## Auto-update della pagina
+## Onestà tecnica
 
-La pagina mostra **subito le nuove versioni**: `app.js` confronta
-`window.YTD_VERSION` (scritto in `index.html`) con `version.txt` e, quando
-cambiano, si ricarica da sola (se c'è un download in corso mostra un banner
-“Ricarica” invece di interromperlo). I nomi delle risorse portano `?v=…` per
-bypassare la cache del browser. **Prima di ogni commit** aggiorna la versione
-con:
+Verificato empiricamente (ago 2026): senza alcun server non è possibile
+garantire il 100% dei download, perché **YouTube non concede CORS** alle sue
+API interne (il browser non può chiamarle direttamente) e blocca in modo
+intermittente le istanze pubbliche gratuite. Per questo:
+
+- **Ricerca e anteprima**: funzionano quasi sempre.
+- **Download**: funzionano quando l'istanza pubblica non è in blocco
+  (verificato: audio/video scaricati dal browser, ~11 MB in questo test).
+  Nei momenti di blocco la pagina ritenta da sola e poi chiede di riprovare.
+- **Playlist**: l'estrazione dipende dall'istanza; se bloccata la pagina
+  mostra un messaggio esplicito.
+- Per un download **garantito** servirebbe un server con IP diverso dal tuo
+  (es. un VPS da ~3€/mese): è l'unica strada che YouTube non riesce a
+  bloccare a lungo. La pagina attuale è la migliore opzione possibile
+  **senza server**.
+
+## Sviluppo
+
+- `index.html`, `style.css`, `app.js` — pagina statica, JavaScript **ES5**
+  volutamente senza framework né build: gira anche su browser datati
+  (Firefox 44+, Chrome/Edge 49+, Safari 9+).
+- Il pool di istanze è `PIPED_POOL` in `app.js` (in cima): aggiungi un'istanza
+  pubblica di Piped come voce dell'array; il health check la valuta da solo.
+- Nessuna dipendenza, nessun account, nessun deploy: basta pushare su GitHub
+  Pages.
+
+### Bump versione
+
+La pagina si auto-aggiorna confrontando `window.YTD_VERSION` (in `index.html`)
+con `version.txt`. **Prima di ogni commit**:
 
 ```bash
 bash tools/bump.sh
 ```
 
-## Deploy
-
-La pagina **funziona senza Cloudflare**: l'engine è il NAS, raggiunto via
-tunnel (https) o con un URL incollato a mano. La rubrica dell'URL è GitHub
-(`nas-url.txt`): il NAS pubblica il suo URL a ogni cambio (dopo un riavvio
-il tunnel ha un URL nuovo, il NAS lo pubblica da solo entro ~60s) e la
-pagina lo legge istantaneamente. Niente account, niente worker.
-
-```bash
-# sul NAS: solo il token GitHub in server/.env (per pubblicare nas-url.txt)
-GITHUB_TOKEN=<fine-grained PAT>
-```
-
-Test rapido (URL del tunnel corrente, vedi `nas-url.txt`):
-
-```bash
-curl "https://xxx.trycloudflare.com/search?q=test"
-curl -I "https://xxx.trycloudflare.com/stream?id=dQw4w9WgXcQ&itag=140"
-```
-
-## Modalità browser (yt-dlp nel browser, fallback senza engine)
-
-Quando l'engine NAS è bloccato da YouTube (anti-bot), la pagina può estrarre
-metadata **direttamente nel browser**: yt-dlp gira in WebAssembly (Pyodide)
-nel worker `browser/worker.js`, e parla con YouTube attraverso il **proxy
-CORS** `/proxy` del NAS (`server/index.js`). YouTube tratta quelle richieste
-come un client diverso dal nostro engine, quindi può passare dove l'engine
-viene rifiutato. I byte audio/video poi scendono diretti dal CDN, o via lo
-stesso proxy se il CDN non manda CORS.
-
-- Nel tab **Incolla link** compare il pulsante **“Estrai nel browser
-  (yt-dlp)”** (solo browser moderni con WebAssembly, ~2023+).
-- La prima volta scarica il runtime (~30 MB, poi resta in cache
-  IndexedDB); il resto dell'uso è leggero.
-- Onestà tecnica: **zero server assoluto non esiste** — i metadata di
-  YouTube richiedono CORS e YouTube non lo concede (preflight = 403), quindi
-  serve comunque un piccolo proxy: quello del NAS. Con il NAS raggiungibile
-  ma bloccato, la modalità browser è un fallback reale; con il NAS spento
-  non c'è proxy.
-- Browser datati (senza WebAssembly): il pulsante non compare, si usa solo
-  l'engine NAS.
-
-File coinvolti: `browser/worker.js` + `browser/network_patch.py` (porting
-MIT del progetto [yt-dlp.wasm](https://forgejo.phillippepelzer.me/FiLL/yt-dlp-wasm)),
-endpoint `/proxy` in `server/index.js`.
-
-## Self-host: engine sul NAS (IP residenziale)
-
-L'engine gira come **server Node su un NAS/VPS** con IP residenziale:
-YouTube flagga molto meno gli IP di casa che quelli dei datacenter, quindi
-i formati audio completi (Opus/AAC) tornano disponibili anche quando un IP
-datacenter è in cooldown.
-
-Copia il progetto sul NAS (es. `/volume1/Download/yt-downloader`) e avvia:
-
-```bash
-bash server/start.sh
-```
-
-Lo script trova da solo il binario di Node (anche il pacchetto Synology
-`Node.js_v20`, che non è in PATH) e avvia in background, in modo persistente,
-dentro **sessioni screen** (Entware: `/opt/sbin/screen`, installabile con
-`opkg install screen`):
-
-1. l'**engine** su `http://localhost:8787` in una sessione screen `ytd`
-   (log in `server.log.screen`; allegati: `screen -r ytd`);
-2. il **tunnel pubblico** `cloudflared` in una sessione screen
-   `cloudflared` → URL `https://….trycloudflare.com` (gratis, senza account,
-   senza port forwarding; log in `server.log.cloudflared.screen`).
-   Se `cloudflared` manca, installalo con
-   `bash server/install-cloudflared.sh`.
-
-Le sessioni screen sopravvivono alla chiusura della SSH (più robuste di
-`setsid nohup`). Per gestirle: `screen -r ytd` (o `-r cloudflared`) per
-agganciarsi, `Ctrl-a d` per staccarsi; `SCREENDIR=<dir>/.screen` serve se la
-home utente non esiste (tipico di Synology).
-
-C'è anche una terza sessione screen, **watchdog**: ogni 60 secondi richiama
-`server/start.sh` (idempotente), quindi se l'engine o il tunnel muoiono a
-runtime vengono **riavviati da soli** in meno di un minuto.
-
-Per ritrovare l'URL pubblico in qualsiasi momento (cambia a ogni riavvio del
-tunnel):
-
-```bash
-curl http://<IP-NAS>:8787/tunnel-url
-# → {"tunnelUrl":"https://….trycloudflare.com","local":"http://…"}
-```
-
-### Avvio automatico al boot (Synology)
-
-```bash
-sudo cp server/S99ytd.sh /usr/local/etc/rc.d/S99ytd.sh
-sudo chmod +x /usr/local/etc/rc.d/S99ytd.sh
-# test manuale:
-sudo /usr/local/etc/rc.d/S99ytd.sh start   # avvia engine + tunnel
-sudo /usr/local/etc/rc.d/S99ytd.sh stop    # li ferma
-```
-
-Al riavvio del NAS l'engine, il tunnel e il watchdog ripartono da soli
-(`S99` = eseguito tra gli ultimi al boot, quando la rete è pronta; con
-retry automatico se il volume non è ancora montato).
-
-**Rete di sicurezza finale**: un cron sul NAS (`/etc/crontab`) esegue
-`server/start.sh` ogni 5 minuti — anche se il watchdog stesso morisse, il
-cron riavvia tutto. Il watchdog inoltre tronca da solo i log oltre i 10MB
-(disco pieno = crash). Verificato: cron attivo (test con riga temporanea),
-riavvio completo OK, cambio URL pubblicato e scoperto dalla pagina live.
-
-### Usare il NAS come engine nella pagina
-
-La pagina usa **solo il NAS** come engine:
-
-1. il NAS pubblica ogni 60 secondi il suo URL pubblico corrente su GitHub
-   (`nas-url.txt`, solo quando l'URL cambia) — dopo un riavvio la pagina
-   trova il NAS da sola (ricontrollo ogni 5 minuti);
-2. engine disponibili: quello incollato nel footer ("cambia") e il NAS
-   scoperto; l'ultimo che ha funzionato viene provato per primo (memoria
-   in `localStorage`);
-3. se il NAS è in backoff anti-bot la pagina ritenta da sola (fino a 5
-   cicli, attesa limitata a 90s ciascuno).
-
-> **Nota (mixed content)**: la pagina su GitHub Pages è HTTPS, quindi può
-> raggiungere il NAS solo via HTTPS — cioè l'URL del tunnel
-> `trycloudflare.com`. L'IP LAN (`http://192.168.0.108:8787`) funziona
-> solo se apri la pagina via HTTP (es. servendola dal NAS stesso); da
-> GitHub Pages il browser lo blocca. Quando il tunnel cambia URL (a ogni
-> riavvio del NAS), il NAS lo pubblica da solo e la pagina si aggiorna
-> entro pochi minuti.
-
-Configurazione (una tantum, sul NAS):
-
-```bash
-# token GitHub: il NAS pubblica il suo URL su GitHub
-#    (nas-url.txt) — la pagina lo legge direttamente dal repo, così
-#    l'indirizzo resta aggiornato anche SENZA worker. Crea un fine-grained
-#    PAT (GitHub → Settings → Developer settings → Fine-grained tokens →
-#    repo vincenzosco/yt-downloader → Contents: Read and write) e:
-cat >> server/.env <<EOF
-GITHUB_TOKEN=<fine-grained PAT>
-EOF
-```
-
-Il footer della pagina mostra il NAS attivo (es. `…trycloudflare.com (NAS
-attivo) → …`). Resta comunque possibile forzare un engine specifico con il
-campo “Engine URL” (in cima, a destra).
-
-> **Nota**: con il tunnel gratuito `trycloudflare` l'URL cambia a ogni
-> riavvio del tunnel. Dopo un riavvio del NAS: il programma riparte da solo
-> (rc.d `S99ytd.sh` + watchdog) e il NAS **pubblica il nuovo URL su GitHub**
-> (`nas-url.txt`), che la pagina legge istantaneamente. Senza token GitHub
-> va incollato a mano. Per un URL *stabile* serve comunque un tunnel
-> “named” (richiede un account Cloudflare e un dominio).
-
-## Sviluppo
-
-- `index.html`, `style.css`, `app.js` — pagina statica, JavaScript ES5
-  volutamente senza framework né build: gira anche su browser datati.
-- `worker/index.js` — logica engine (Web API standard).
-- `worker/pot.js` — generazione PO token (anti-bot) con `bgutils-js`
-  (dipendenza npm in `worker/package.json`). Genera il token all'avvio del
-  worker, lo rigenera su richiesta se scade (TTL 8h) e, se YouTube risponde
-  `LOGIN_REQUIRED`, **rigenera forzatamente il token** (il blocco è spesso
-  legato al token usato, non all'IP).
-- `worker/proxy-list.js` — gestore di liste proxy pubbliche: scarica da 5
-  sorgenti, fa un check di salute per sorgente (HTTP + parse), deduplica
-  host:porta e fa auto-refresh con TTL 15 min. Esposto da `/proxies`.
-  **Nota**: sul piano gratuito del worker `fetch()` non può passare attraverso
-  un proxy (servirebbe `connect()`, solo a pagamento) — la lista è usata come
-  infrastruttura e check di salute, non per instradare il traffico YouTube.
-
-### Test locale
-
-```bash
-# test del parsing worker (Node.js)
-node worker/test.js
-
-# test della generazione PO token (Node.js)
-cd worker && node pot-test.mjs
-
-# test delle 5 liste proxy (Node.js, check di salute)
-cd worker && node proxy-test.mjs
-```
-
 ## Note
 
 - Solo per contenuti di cui hai i diritti.
-- Gli endpoint Innertube possono cambiare: aggiorna i client in `worker/index.js`
-  (`CLIENT_WEB`, `CLIENT_ANDROID`, `CLIENT_IOS`).
-- **Anti-bot (PO token)**: YouTube chiede "Sign in to confirm you're not a bot"
-  sugli IP dei datacenter. Il worker genera un PO token (Proof of Origin) con
-  `bgutils-js` (`worker/pot.js`): all'avvio del worker esegue la VM BotGuard
-  (via `new Function`, ammesso nei Workers in fase di startup) e ottiene dal
-  servizio WAA un token valido (integrity o websafe-fallback). Il token viene
-  iniettato nelle richieste `/info`, `/formats`, `/stream` e supera il
-  bot-challenge. È un ulteriore strato sopra `visitorData` + retry.
-- **Anti-bot aggressivo**: 3 giri di client con `visitorData` fresco; quando
-  una richiesta risponde `LOGIN_REQUIRED`, il worker rigenera il PO token
-  (non riusa quello bloccato) e riprova. La generazione ha retry con backoff
-  (3 tentativi) e TTL di 8h.
-- **Affidabilità (meno richieste = meno blocchi)**: il worker tiene una cache
-  in memoria per `/search`, `/info`, `/formats`, `/playlist` (TTL 10–30 min)
-  con single-flight (le richieste concorrenti per lo stesso video aspettano
-  una sola chiamata a YouTube) e **serializza** tutte le chiamate a YouTube
-  (mai più di una alla volta: le raffiche fanno scattare il flag).
-- **Strategia client (allineata a yt-dlp, lug 2026)**: con la nuova
-  enforcement di YouTube (PO token legati al video) la versione `ANDROID`
-  21.26.364 risponde spesso con i formati **senza url**. Verificato
-  empiricamente, due client continuano a restituire gli audio-only completi:
-  **`ANDROID 20.14.37` + PO token** (primo tentativo) e **`VISIONOS`**
-  (senza token). Poi vengono provate le versioni nuove (`ANDROID 21.26.364`,
-  `IOS 21.26.4`) e infine `web_embedded` (nessun PO token, ma solo 360p
-  progressivo itag 18) come ultima risorsa scaricabile. `android_vr` è
-  evitato: YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
-- **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
-  l'engine smette di martellare YouTube e per un po' (90s → 10min, raddoppia
-  a ogni blocco) risponde subito `{ retryAfter }`; il frontend **non aspetta
-  subito**: se ci sono più engine (custom + NAS) passa al successivo e
-  aspetta solo se sono bloccati tutti: fino a 5 cicli, ognuno con attesa
-  limitata a 90s. Con un solo engine (NAS) i tentativi si ripetono con
-  backoff esponenziale: il singolo engine viene ritentato fino a 6 volte
-  (1.5s → 20s) e l'intera sequenza fino a 5 volte.
-- **Stream leggero**: `/stream` non rifà le chiamate pesanti a YouTube:
-  riusa i formati già cachati da `/formats` (stesso IP del worker, gli URL
-  googlevideo restano validi) e scarica direttamente l'URL. Se l'URL cachato
-  risponde 403, fa un solo rinfresco leggero. Questo evita il crash da limite
-  CPU del piano free (errore 1101) e dimezza i tempi.
-- **Cache URL audio**: gli URL googlevideo non vengono cachati oltre i 20 min
-  della cache `/formats` (riusarli a lungo fa scattare il throttling).
-- **Proxy gratuiti (5 liste)**: il worker scarica e controlla le liste proxy
-  pubbliche (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) con check
-  di salute e auto-refresh (`/proxies`). ⚠️ Sul piano gratuito Cloudflare il
-  `fetch()` del worker non può passare *attraverso* un proxy (serve
-  `connect()`, solo a pagamento), quindi le liste non instradano il traffico
-  YouTube: restano disponibili come infrastruttura per un eventuale engine
-  esterno. In più i proxy gratuiti sono quasi tutti IP di datacenter — la
-  stessa categoria che YouTube flagga.
-- **Limite reale**: un uso frequente continuato fa comunque scattare il blocco
-  sull'IP del worker (il PO token non garantisce il 100%). Si azzera da solo in
-  pochi minuti/ore. L'uso normale (qualche canzone) non lo innesca. Per un uso
-  intenso servirebbe un provider aggiuntivo (es. Deno Deploy, che richiede un
-  secondo account) oppure un IP residenziale via proxy.
-
+- Le istanze pubbliche di Piped possono cambiare/bloccarsi: è il costo di
+  non avere un server. Se un'istanza muore, aggiungine un'altra a `PIPED_POOL`
+  e la pagina la userà da sola.
 - **Browser datati**: la pagina è JavaScript ES5 puro (niente `let`/arrow/fetch,
-  niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in su
-  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con `<audio>`).
-  Il selettore qualità usa `<select>`+`optgroup`, supportato da sempre.
+  niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in
+  su (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con
+  `<audio>`). Il selettore qualità usa `<select>`+`optgroup`, supportato da
+  sempre. Niente WebAssembly richiesto.
+
+## License
+
+MIT
 
 <hr>
 
@@ -332,8 +113,9 @@ cd worker && node proxy-test.mjs
 
 # ytd.
 
-A minimal YouTube downloader, hosted on GitHub Pages. Search a song or
-paste a link (video or playlist): preview title & cover, download audio.
+A minimal YouTube downloader, hosted on GitHub Pages, **with no server
+behind it at all**. Search a song or paste a link (video or playlist):
+preview title & cover, download audio/video with quality choice.
 
 Published at [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
@@ -341,288 +123,97 @@ The page UI is bilingual (IT/EN toggle, top right).
 
 ## Features
 
-- **Search** — results with thumbnail, title, author, duration and audio preview (▶).
+- **Search** — results with thumbnail, title, author, duration, views and
+  audio preview (▶).
 - **Paste link** — video or playlist: card with title & cover, track list.
-- **Quality picker** — every “Download” button lets you choose format/quality:
-  Audio (AAC/Opus with bitrate), Video with audio (360p progressive) and
-  Video only (720p–1080p+). Estimated size shown on every option.
-- **Playlist “Download all”** — downloads every track in sequence, with your
-  chosen audio quality (AAC recommended / Opus best / light).
+- **Quality picker** — every “Download” button lets you choose format/quality
+  (Audio when available, Video with audio, Video only). Estimated size shown
+  on every option.
+- **Playlist “Download all”** — downloads every track in sequence.
+- **Multi-select → .zip** — tick songs with the checkboxes (from one or more
+  searches — the selection stays while you search more) and download them all
+  as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
+  filenames from the title with the right extension, failed songs don't stop
+  the batch.
 - **IT/EN language** — toggle at the top right (choice is remembered).
-- **Download always available** — the Download button appears immediately,
-  even when the video details (`/info`) are temporarily blocked by YouTube;
-  `/info` is only used for duration and title and never blocks the download.
-- **Clear errors** — error messages report the real reason (e.g. anti-bot,
-  interrupted download) instead of a generic “all engines failed”.
 - **Progress bars** — every download (single, “Download all” and the .zip
-  batch) shows a red bar advancing with the received bytes.
-- **Anti-bot** — the engine generates a PO token and retries on its own if
-  YouTube asks “sign in to confirm you're not a bot” (see Notes).
+  batch) shows a bar advancing with the received bytes.
+- **Auto-update** — when the repo is updated, the page reloads itself (a
+  “Reload” banner appears if a download is in progress).
 
-## How it works
+## How it works — zero server
 
-GitHub Pages (static) + serverless engine (Cloudflare Worker) or a
-self-hosted NAS engine (residential IP, auto-discovered via `/nas`;
-engine order: custom → NAS → worker). YouTube blocks requests with `Origin`
-headers that come from the browser. The engine makes API calls server-side,
-without `Origin`, and generates its own anti-bot PO token (`worker/pot.js`)
-inside the engine.
+The page is **100% static** (GitHub Pages) and talks **straight from the
+browser** to the **public Piped API** (free, no account, permissive CORS).
+There is no server of yours, nothing to configure:
 
-### Engine endpoints (`worker/index.js`)
+```
+browser (static page on GitHub Pages)
+   │  direct requests (CORS *) to the public Piped API
+   ▼
+public Piped instance → YouTube → audio/video URLs
+   │  bytes flow straight to the browser (Piped's CORS proxy)
+   ▼
+download
+```
 
-| Endpoint           | Description                                      |
-|--------------------|--------------------------------------------------|
-| `/search?q=…`      | search (title, author, duration, thumbnail)     |
-| `/info?id=…`       | video details + preferred audio                  |
-| `/formats?id=…`    | all available formats (audio, progressive, video)|
-| `/playlist?list=…` | playlist track list                              |
-| `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
-| `/proxies`             | health check of the 5 public proxy lists     |
-| `/register` (POST)     | the self-hosted NAS registers its public URL (key) |
-| `/nas`                 | the page discovers the current NAS URL         |
+Public instances get **blocked/changed by YouTube intermittently**
+(anti-bot). The page handles it by itself:
 
-## Auto-update
+- keeps a **pool of instances** and **health-checks** them every 5 minutes,
+  using the first alive one (remembered in `localStorage` to start fast);
+- if an instance fails, it discards it and **falls through to the others
+  automatically**;
+- when YouTube blocks the instance (“Sign in to confirm you're not a bot”),
+  the page **retries on its own** with increasing waits and shows a clear
+  message if the block persists: just try again in a few minutes.
 
-The page shows **new versions immediately**: `app.js` compares
-`window.YTD_VERSION` (written into `index.html`) with `version.txt` and,
-when they differ, reloads itself (if a download is in progress it shows a
-“Reload” banner instead of interrupting it). Asset names carry `?v=…` to
-bypass the browser cache. **Before every commit** bump the version with:
+## Technical honesty
+
+Verified empirically (Aug 2026): with no server at all, 100% reliable
+downloads are impossible, because **YouTube does not grant CORS** to its
+internal APIs (the browser cannot call them directly) and intermittently
+blocks free public instances. Therefore:
+
+- **Search & preview**: work almost always.
+- **Downloads**: work when the public instance is not blocked (verified:
+  audio/video downloaded from the browser, ~11 MB in this test). During
+  block windows the page retries by itself, then asks you to retry later.
+- **Playlists**: extraction depends on the instance; if blocked, the page
+  shows an explicit message.
+- For **guaranteed** downloads you would need a server on a different IP
+  than yours (e.g. a ~3€/month VPS): it is the only route YouTube cannot
+  block for long. This page is the best option possible **without a server**.
+
+## Development
+
+- `index.html`, `style.css`, `app.js` — static page, plain **ES5** JavaScript
+  (no framework, no build): works on old browsers too (Firefox 44+,
+  Chrome/Edge 49+, Safari 9+).
+- The instance pool is `PIPED_POOL` in `app.js` (at the top): add a public
+  Piped instance as an array entry; the health check evaluates it on its own.
+- No dependencies, no account, no deploy: just push to GitHub Pages.
+
+### Version bump
+
+The page auto-updates by comparing `window.YTD_VERSION` (in `index.html`)
+with `version.txt`. **Before every commit**:
 
 ```bash
 bash tools/bump.sh
 ```
 
-## Deploy
-
-The page **works without Cloudflare**: the engine is the NAS, reached via
-its HTTPS tunnel or a manually pasted URL. The URL registry is GitHub
-(`nas-url.txt`): the NAS publishes its URL on every change (after a reboot
-the tunnel gets a new URL and the NAS publishes it by itself within ~60s)
-and the page reads it instantly. No account, no worker.
-
-```bash
-# on the NAS: only the GitHub token in server/.env (to publish nas-url.txt)
-GITHUB_TOKEN=<fine-grained PAT>
-```
-
-## Browser mode (yt-dlp in the browser, engine-less fallback)
-
-When the NAS engine is blocked by YouTube (anti-bot), the page can extract
-metadata **directly in the browser**: yt-dlp runs in WebAssembly (Pyodide)
-in the `browser/worker.js` worker, talking to YouTube through the NAS's
-**CORS proxy** `/proxy` (`server/index.js`). YouTube treats those requests
-as a different client from our engine, so it can pass where the engine is
-refused. The audio/video bytes then flow straight from the CDN, or through
-the same proxy if the CDN does not send CORS.
-
-- In the **Paste link** tab a **“Extract in browser (yt-dlp)”** button
-  appears (modern browsers with WebAssembly only, ~2023+).
-- The first run downloads the runtime (~30 MB, then cached in IndexedDB);
-  afterwards it is lightweight.
-- Technical honesty: **absolute zero-server does not exist** — YouTube
-  metadata requires CORS and YouTube does not grant it (preflight = 403),
-  so a small proxy is still needed: the NAS one. With the NAS reachable but
-  blocked, browser mode is a real fallback; with the NAS off there is no
-  proxy.
-- Old browsers (no WebAssembly): the button does not appear, only the NAS
-  engine is used.
-
-Files: `browser/worker.js` + `browser/network_patch.py` (MIT port of the
-[yt-dlp.wasm](https://forgejo.phillippepelzer.me/FiLL/yt-dlp-wasm) project),
-`/proxy` endpoint in `server/index.js`.
-
-## Self-hosting: engine on your NAS (residential IP)
-
-The engine runs as a **Node server on a NAS/VPS** with a residential IP:
-YouTube flags home IPs much less than datacenter ones, so full audio
-formats (Opus/AAC) come back even when a datacenter IP is in cooldown.
-
-Copy the project to the NAS (e.g. `/volume1/Download/yt-downloader`) and run:
-
-```bash
-bash server/start.sh
-```
-
-The script finds the Node binary by itself (including the Synology package
-`Node.js_v20`, which is not in PATH) and starts, persistently, in background,
-inside **screen sessions** (Entware: `/opt/sbin/screen`, install with
-`opkg install screen`):
-
-1. the **engine** on `http://localhost:8787` in a screen session `ytd`
-   (log in `server.log.screen`; attach with `screen -r ytd`);
-2. the **public tunnel** `cloudflared` in a screen session `cloudflared`
-   → `https://….trycloudflare.com` URL (free, no account, no port
-   forwarding; log in `server.log.cloudflared.screen`). If `cloudflared` is
-   missing, install it with `bash server/install-cloudflared.sh`.
-
-The screen sessions survive SSH disconnects (more robust than
-`setsid nohup`). To manage them: `screen -r ytd` (or `-r cloudflared`) to
-attach, `Ctrl-a d` to detach; `SCREENDIR=<dir>/.screen` is needed when the
-user home does not exist (typical on Synology).
-
-There is also a third screen session, **watchdog**: every 60 seconds it
-re-runs `server/start.sh` (idempotent), so if the engine or the tunnel die
-at runtime they are **restarted by themselves** in under a minute.
-
-To find the current public URL at any time (it changes on every tunnel
-restart):
-
-```bash
-curl http://<NAS-IP>:8787/tunnel-url
-# → {"tunnelUrl":"https://….trycloudflare.com","local":"http://…"}
-```
-
-### Auto-start at boot (Synology)
-
-```bash
-sudo cp server/S99ytd.sh /usr/local/etc/rc.d/S99ytd.sh
-sudo chmod +x /usr/local/etc/rc.d/S99ytd.sh
-# manual test:
-sudo /usr/local/etc/rc.d/S99ytd.sh start   # starts engine + tunnel
-sudo /usr/local/etc/rc.d/S99ytd.sh stop    # stops both
-```
-
-After a NAS reboot the engine, the tunnel and the watchdog start on their
-own (`S99` = run among the last at boot, when the network is ready; with
-automatic retry if the volume is not mounted yet).
-
-**Final safety net**: a cron job on the NAS (`/etc/crontab`) runs
-`server/start.sh` every 5 minutes — even if the watchdog itself dies, the
-cron brings everything back. The watchdog also trims logs above 10MB by
-itself (disk full = crash). Verified: cron active (tested with a temporary
-line), full restart OK, URL change published and discovered by the live
-page.
-
-### Using the NAS as engine in the page
-
-The page uses **only the NAS** as engine:
-
-1. the NAS publishes its current public URL to GitHub every 60 seconds
-   (`nas-url.txt`, only when the URL changes) — after a reboot the page
-   finds the NAS by itself (re-check every 5 minutes);
-2. available engines: the one pasted in the footer (“change”) and the
-   discovered NAS; the last one that worked is tried first next time
-   (remembered in `localStorage`);
-3. if the NAS is in anti-bot backoff the page retries by itself (up to 5
-   cycles, each wait capped at 90s).
-
-> **Note (mixed content)**: the page on GitHub Pages is HTTPS, so it can
-> reach the NAS only over HTTPS — i.e. the `trycloudflare.com` tunnel URL.
-> The LAN IP (`http://192.168.0.108:8787`) works only if you open the page
-> over HTTP (e.g. served from the NAS itself); from GitHub Pages the
-> browser blocks it. When the tunnel changes URL (on every NAS restart),
-> the NAS publishes it by itself and the page updates within minutes.
-
-One-time setup (on the NAS):
-
-```bash
-# GitHub token: the NAS publishes its URL to GitHub
-GITHUB_TOKEN=<fine-grained PAT>
-EOF
-```
-
-The page footer shows the active NAS (e.g. `…trycloudflare.com (NAS
-active) → …`). You can still force a specific engine with the “Engine URL”
-field (top right).
-
-> **Note**: with the free `trycloudflare` tunnel the URL changes on every
-> tunnel restart. After a NAS reboot: the program restarts by itself
-> (rc.d `S99ytd.sh` + watchdog) and the NAS **publishes the new URL to
-> GitHub** (`nas-url.txt`), which the page reads instantly. Without the
-> GitHub token, paste it manually. For a *stable* URL you still need a
-> “named” tunnel (requires a Cloudflare account and a domain).
-
-### Local tests
-
-```bash
-# worker parsing tests (Node.js)
-node worker/test.js
-
-# PO token generation test (Node.js)
-cd worker && node pot-test.mjs
-
-# proxy lists health check (Node.js)
-cd worker && node proxy-test.mjs
-```
-
-## Development
-
-- `index.html`, `style.css`, `app.js` — static page, ES5 (no framework, no build).
-- `worker/index.js` — engine logic (standard Web APIs).
-- `worker/pot.js` — anti-bot PO token generation (`bgutils-js`). Generates
-  the token at worker startup, refreshes it on demand (8h TTL) and, when
-  YouTube answers `LOGIN_REQUIRED`, **force-regenerates the token** (the
-  block is often bound to the token used, not the IP).
-- `worker/proxy-list.js` — public proxy-list manager: fetches 5 sources,
-  health-checks each source (HTTP + parse), dedupes host:port and
-  auto-refreshes with a 15-min TTL. Exposed via `/proxies`.
-  **Note**: on the free worker plan `fetch()` cannot route traffic *through*
-  a proxy (that needs `connect()`, paid only) — the list is kept as
-  infrastructure and source health-check, not to route YouTube traffic.
-
 ## Notes
 
 - Only for content you have rights to.
-- **Anti-bot (PO token)**: YouTube asks "Sign in to confirm you're not a bot"
-  on datacenter IPs. The worker generates a PO token with `bgutils-js`
-  (`worker/pot.js`) and injects it into `/info`, `/formats`, `/stream` to
-  pass the challenge.
-- **Aggressive anti-bot**: 3 rounds of clients with fresh `visitorData`;
-  when a request answers `LOGIN_REQUIRED`, the worker regenerates the PO
-  token (not the blocked one) and retries. Generation has retry-with-backoff
-  (3 attempts) and an 8h TTL.
-- **Reliability (fewer requests = fewer blocks)**: the worker keeps an
-  in-memory cache for `/search`, `/info`, `/formats`, `/playlist`
-  (10–30 min TTL) with single-flight (concurrent requests for the same video
-  wait for a single YouTube call) and **serializes** every YouTube call
-  (never more than one at a time — bursts trigger the flag).
-- **Anti-bot backoff**: when all routes fail with `LOGIN_REQUIRED`, the
-  engine stops hammering YouTube and for a while (90s → 10min, doubling each
-  block) answers immediately with `{ retryAfter }`; the frontend **does not
-  wait right away**: with multiple engines (custom + NAS) it moves to the
-  next one and only waits when all are blocked: up to 5 cycles, each wait
-  capped at 90s. With a single engine (NAS) attempts repeat with
-  exponential backoff: each engine is retried up to 6 times (1.5s → 20s)
-  and the whole sequence up to 5 times.
-- **Light stream**: `/stream` does not redo the heavy YouTube calls: it
-  reuses the formats already cached by `/formats` (same worker IP, so
-  googlevideo URLs stay valid) and downloads the URL directly. If the cached
-  URL answers 403, it does a single light refresh. This avoids the free-plan
-  CPU-limit crash (error 1101) and halves latency.
-- **Audio URL cache**: googlevideo URLs are not cached beyond the 20-min
-  `/formats` cache (reusing them for long triggers YouTube throttling).
-- **Free proxies (5 lists)**: the worker fetches and health-checks public
-  proxy lists (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) with
-  auto-refresh (`/proxies`). ⚠️ On the free Cloudflare plan the worker's
-  `fetch()` cannot go *through* a proxy (`connect()` is paid only), so the
-  lists do not route YouTube traffic: they stay available as infrastructure
-  for a possible external engine. Also, free proxies are almost all
-  datacenter IPs — the very category YouTube flags.
-- **Client strategy (aligned with yt-dlp, Jul 2026)**: with YouTube's new
-  enforcement (video-bound PO tokens), the `ANDROID` 21.26.364 client often
-  returns formats **without urls**. Verified empirically, two clients still
-  return the full audio-only formats: **`ANDROID 20.14.37` + PO token**
-  (first try) and **`VISIONOS`** (no token). Then the new versions
-  (`ANDROID 21.26.364`, `IOS 21.26.4`) are tried, and finally `web_embedded`
-  (no PO token, but only 360p progressive itag 18) as the last downloadable
-  resort. `android_vr` is avoided: YouTube broke it on 2026-08-17 (403 on
-  all formats).
-- **Multi-select → .zip**: tick songs with the checkboxes (from one or more
-  searches — the selection stays while you search more) and download them all
-  as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
-  filenames from the title with the right extension, failed songs don't stop
-  the batch. The zip is built in the browser in plain ES5 (store method — the
-  audio is already compressed, so there is nothing to gain from recompressing;
-  a few dozen songs are fine, very large batches need enough RAM).
-- **Real limit**: heavy continued use still triggers blocks on the worker IP
-  (PO token is not 100%). It resets on its own in minutes/hours. Normal use
-  (a few songs) is fine. For heavy use you'd need an extra provider or a
-  residential proxy (paid).
+- Public Piped instances can change/be blocked: that's the price of having
+  no server. If an instance dies, add another to `PIPED_POOL` and the page
+  will use it on its own.
 - **Older browsers**: the page is plain ES5 JavaScript (no `let`/arrow/fetch,
   no build) and uses `<audio>` for preview: works roughly from 2015 onwards
-  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 with `<audio>`).
-  The quality picker uses `<select>`+`optgroup`, supported everywhere.
+  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 with
+  `<audio>`). The quality picker uses `<select>`+`optgroup`, supported
+  everywhere. No WebAssembly required.
 
 ## License
 

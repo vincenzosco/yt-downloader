@@ -1,6 +1,3 @@
 node_modules/
-.wrangler/
 .dev.vars
 .freebuff/
-server/.env
-server/.published-url

@@ -2,20 +2,13 @@
 (function () {
   'use strict';
 
-  /* La pagina usa SOLO il NAS self-host come engine: l'URL del tunnel
-     trycloudflare (https, funziona anche dalla pagina https di GitHub
-     Pages) o un URL custom incollato dall'utente. Il worker Cloudflare
-     serve esclusivamente come rubrica best-effort per la discovery del
-     NAS (/nas): se il worker non c'e' (rimosso), si incolla l'URL a mano. */
-  /* il NAS pubblica il suo URL attuale su GitHub (nas-url.txt): la pagina
-     lo legge qui — istantaneo, senza dipendere da alcun worker */
-  var NAS_URL_FILE = 'https://raw.githubusercontent.com/vincenzosco/yt-downloader/main/nas-url.txt';
-  var ENGINE_KEY = 'ytd.engine';
-  var LAST_GOOD_KEY = 'ytd.lastGood';
+  /* La pagina NON usa alcun server: parla direttamente con le API pubbliche
+     di Piped (gratis, senza account, CORS permissivo) dal browser. Le
+     istanze pubbliche vengono bloccate/cambiate da YouTube in modo
+     intermittente, quindi la pagina tiene un pool, le verifica (health
+     check) e usa la prima viva, ricontrollando in automatico. */
 
-  function engineMissingMsg() { return t('engine-missing'); }
-
-    /* ---------- lingua ---------- */
+  /* ---------- lingua ---------- */
 
   var LANGS = {
     it: {
@@ -27,20 +20,12 @@
       'btn-search': 'Cerca',
       'placeholder-link': 'https://www.youtube.com/watch?v=… o playlist…',
       'btn-preview': 'Anteprima',
-      'bm-btn': 'Estrai nel browser (yt-dlp)',
-      'bm-start': 'Avvio runtime nel browser (prima volta ~30MB, poi in cache)…',
-      'bm-proxy-nas': 'Uso il NAS come proxy metadata.',
-      'bm-proxy-missing': 'Nessun proxy metadata: incolla l\u2019URL del NAS nel footer (\u201ccambia\u201d).',
-      'bm-extract-err': 'estrazione nel browser: {0}',
-      'bm-unsupported': 'Il tuo browser non supporta la modalità browser (serve WebAssembly, browser ~2023+).',
-      'bm-ok': 'Metadata estratti nel browser (yt-dlp).',
       'noscript': 'Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).',
       'engine-label': 'engine:',
-      'engine-change': 'cambia',
-      'engine-not-configured': 'non configurato',
-      'engine-nas-active': 'NAS attivo',
       'disclaimer': 'solo per contenuti di cui hai i diritti.',
-      'engine-missing': "Engine non configurato. Apri il worker (deploy) e incolla qui il suo URL con \u201ccambia\u201d in fondo alla pagina.",
+      'piped-checking': 'verifico le istanze pubbliche…',
+      'piped-none': 'Nessuna istanza pubblica raggiungibile in questo momento. Riprova tra poco.',
+      'piped-label': 'browser (API Piped pubblica)',
       'searching': 'cerco…',
       'no-results': 'nessun risultato per \u201c{0}\u201d',
       'search-err': 'ricerca: {0}',
@@ -50,7 +35,7 @@
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
       'loading-tracks': 'carico le tracce…',
-      'playlist-empty': 'Playlist vuota o non accessibile.',
+      'playlist-empty': 'Playlist vuota o non accessibile (spesso è il blocco anti-bot di YouTube: riprova tra poco).',
       'tracks-count': '{0} tracce',
       'download': 'Scarica',
       'download-all': 'Scarica tutte',
@@ -70,9 +55,9 @@
       'opt-audio-best': 'Audio Opus (migliore)',
       'opt-audio-light': 'Audio leggero',
       'no-save-support': 'Il tuo browser non supporta il salvataggio diretto: apri il link e salva con \u201csalva con nome\u201d.',
-      'engine-change-prompt': 'URL del NAS (engine). Es.: https://xxx.trycloudflare.com — lascia vuoto per l\u2019auto-discovery.',
-      'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
-      'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
+      'loading-stream': 'carico lo stream…',
+      'loading-info': 'carico le informazioni…',
+      'bot-blocked': "YouTube ha bloccato temporaneamente l'istanza pubblica (anti-bot). Riprova tra qualche minuto.",
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
       'youtube-refused-status': 'YouTube ha rifiutato la richiesta (HTTP {0}, blocco temporaneo). Riprova tra poco.',
       'interrupted': 'Download interrotto (rete o annullamento). Riprova.',
@@ -98,20 +83,12 @@
       'btn-search': 'Search',
       'placeholder-link': 'https://www.youtube.com/watch?v=… or playlist…',
       'btn-preview': 'Preview',
-      'bm-btn': 'Extract in browser (yt-dlp)',
-      'bm-start': 'Starting in-browser runtime (first time ~30MB, then cached)…',
-      'bm-proxy-nas': 'Using the NAS as metadata proxy.',
-      'bm-proxy-missing': 'No metadata proxy: paste the NAS URL in the footer (\u201cchange\u201d).',
-      'bm-extract-err': 'browser extraction: {0}',
-      'bm-unsupported': 'Your browser does not support browser mode (needs WebAssembly, ~2023+ browser).',
-      'bm-ok': 'Metadata extracted in the browser (yt-dlp).',
       'noscript': 'This page requires JavaScript (ES5, works in any browser from ~2015).',
       'engine-label': 'engine:',
-      'engine-change': 'change',
-      'engine-not-configured': 'not configured',
-      'engine-nas-active': 'NAS active',
       'disclaimer': 'only for content you have rights to.',
-      'engine-missing': "Engine not configured. Deploy the worker and paste its URL here via \u201cchange\u201d at the bottom of the page.",
+      'piped-checking': 'checking public instances…',
+      'piped-none': 'No public instance reachable right now. Try again soon.',
+      'piped-label': 'browser (public Piped API)',
       'searching': 'searching…',
       'no-results': 'no results for \u201c{0}\u201d',
       'search-err': 'search: {0}',
@@ -121,7 +98,7 @@
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
       'loading-tracks': 'loading tracks…',
-      'playlist-empty': 'Empty or inaccessible playlist.',
+      'playlist-empty': 'Empty or inaccessible playlist (often YouTube\u2019s anti-bot block: try again soon).',
       'tracks-count': '{0} tracks',
       'download': 'Download',
       'download-all': 'Download all',
@@ -141,9 +118,9 @@
       'opt-audio-best': 'Audio Opus (best)',
       'opt-audio-light': 'Light audio',
       'no-save-support': 'Your browser does not support direct saving: open the link and save with \u201csave as\u201d.',
-      'engine-change-prompt': 'NAS (engine) URL. E.g.: https://xxx.trycloudflare.com — leave empty for auto-discovery.',
-      'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
-      'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
+      'loading-stream': 'loading stream…',
+      'loading-info': 'loading info…',
+      'bot-blocked': "YouTube temporarily blocked the public instance (anti-bot). Try again in a few minutes.",
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
       'youtube-refused-status': 'YouTube refused the request (HTTP {0}, temporary block). Try again soon.',
       'interrupted': 'Download interrupted (network or cancelled). Try again.',
@@ -193,7 +170,7 @@
     }
     var btn = $('lang-toggle');
     if (btn) btn.textContent = currentLang === 'it' ? 'EN' : 'IT';
-    renderEngineUrl();
+    if (typeof renderPipedStatus === 'function') renderPipedStatus();
     if (typeof renderSel === 'function') renderSel();
   }
 
@@ -256,254 +233,157 @@
     try { window.localStorage.removeItem(key); } catch (e) { /* niente */ }
   }
 
-  function engineUrl() {
-    var v = storageGet(ENGINE_KEY);
-    return (v && v.length) ? v : '';
+  /* ---------- engine: API pubbliche di Piped (browser-direct, zero server) ----------
+     La pagina parla DIRETTAMENTE con le istanze pubbliche di Piped (gratis,
+     senza account, CORS permissivo): nessun server dietro, funziona da sola
+     su GitHub Pages. YouTube blocca/cambia le istanze pubbliche in modo
+     intermittente (anti-bot), quindi la pagina:
+       - tiene un pool di istanze e le verifica (health check) ogni pochi minuti
+       - usa la prima viva, salvata anche in localStorage per ripartire subito
+       - se un'istanza fallisce, la scarta e passa alle altre in automatico
+     Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
+     la pagina riprova da sola con attese crescenti (retryCall) e alla fine
+     mostra un messaggio chiaro. */
+
+  var PIPED_POOL = [
+    'https://api.piped.private.coffee',
+    'https://pipedapi.adminforge.de',
+    'https://pipedapi.drgns.space',
+    'https://pipedapi.ducks.party',
+    'https://api.piped.yt'
+  ];
+  var PIPED_TTL = 5 * 60 * 1000;  /* ricontrolla le istanze ogni 5 min */
+  var PIPED_KEY = 'ytd.piped';
+  var pipedBase = '';
+  var pipedChecked = 0;
+  var pipedChecking = false;
+
+  function pipedLoadCache() {
+    try {
+      var j = JSON.parse(window.localStorage.getItem(PIPED_KEY) || 'null');
+      if (j && j.base && j.at && (Date.now() - j.at) < PIPED_TTL) return j.base;
+    } catch (e) { /* ignora */ }
+    return '';
+  }
+  function pipedSave(base) {
+    try {
+      window.localStorage.setItem(PIPED_KEY, JSON.stringify({ base: base, at: Date.now() }));
+    } catch (e) { /* ignora */ }
   }
 
-  /* l'engine migliore per anteprime/stream diretti: quello che ha appena
-     funzionato, altrimenti quello incollato, altrimenti il NAS scoperto.
-     Un URL "ultimo-funzionante" salvato in localStorage puo' essere un
-     tunnel di un riavvio precedente (morto): se sappiamo qual è l'URL
-     attuale del NAS e non coincide, lo si ignora (stessa regola del
-     custom in engines()). */
-  function staleTunnel(u) {
-    return !!(nasUrl && u && u.indexOf('trycloudflare.com') !== -1 && u !== nasUrl);
-  }
-  function bestEngine() {
-    var good = storageGet(LAST_GOOD_KEY);
-    if (staleTunnel(good)) good = '';
-    var custom = engineUrl();
-    if (staleTunnel(custom)) custom = '';
-    return good || custom || nasUrl || '';
+  function pipedProbe(base, cb) {
+    var x = new XMLHttpRequest();
+    x.open('GET', base + '/healthcheck', true);
+    x.timeout = 6000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      /* 2xx/3xx = viva (3xx: redirect; l'API vera la verifica la richiesta) */
+      cb(x.status >= 200 && x.status < 400);
+    };
+    x.onerror = function () { cb(false); };
+    x.ontimeout = function () { cb(false); };
+    x.send();
   }
 
-  /* elenco ordinato di engine da provare: custom > NAS (auto) > Cloudflare */
-  var NAS_TTL = 5 * 60 * 1000; /* ricontrolla il NAS ogni 5 min */
-  var nasUrl = null;
-  var nasChecked = 0;
-  var nasChecking = false;
+  function pipedRefresh(force, cb) {
+    if (pipedChecking) {
+      if (cb) setTimeout(function () { cb(pipedBase); }, 300);
+      return;
+    }
+    if (!force && pipedBase && pipedChecked && (Date.now() - pipedChecked) < PIPED_TTL) {
+      if (cb) cb(pipedBase);
+      return;
+    }
+    var cached = pipedLoadCache();
+    if (!force && cached && !pipedBase) { pipedBase = cached; pipedChecked = Date.now(); if (cb) cb(pipedBase); return; }
+    pipedChecking = true;
+    var alive = [];
+    var pending = PIPED_POOL.length;
+    if (!pending) { pipedChecking = false; if (cb) cb(''); return; }
+    for (var i = 0; i < PIPED_POOL.length; i++) {
+      (function (base) {
+        pipedProbe(base, function (ok) {
+          if (ok && alive.indexOf(base) === -1) alive.push(base);
+          pending--;
+          if (pending === 0) {
+            pipedChecking = false;
+            pipedChecked = Date.now();
+            pipedBase = alive.length ? alive[0] : '';
+            if (pipedBase) pipedSave(pipedBase);
+            if (typeof window.__ytdOnPiped === 'function') window.__ytdOnPiped(pipedBase);
+            if (cb) cb(pipedBase);
+          }
+        });
+      })(PIPED_POOL[i]);
+    }
+  }
 
-  /* rubrica dell'URL del NAS: nas-url.txt pubblicato dal NAS sul repo
-     GitHub (il NAS si riavvia, pubblica il nuovo URL, la pagina lo legge).
-     Fonti in ordine:
-       1) raw.githubusercontent (istantaneo, subito dopo la pubblicazione)
-       2) stesso dominio su GitHub Pages (nessun CORS, nessuna dipendenza
-          da CDN esterni; in ritardo di ~1 min rispetto a raw per la build)
-     Se falliscono entrambe, si usa l'URL incollato a mano. */
-  function refreshNas(force) {
-    if (nasChecking) return;
-    if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
-    nasChecking = true;
-    nasChecked = Date.now();
-    function done(u) {
-      nasChecking = false;
-      nasUrl = u;
-      if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(u);
-    }
-    function ask(url, cb) {
-      var x = new XMLHttpRequest();
-      x.open('GET', url, true);
-      x.timeout = 8000;
-      x.onreadystatechange = function () {
-        if (x.readyState !== 4) return;
-        if (x.status >= 200 && x.status < 300) cb(x.responseText);
-        else cb(null);
-      };
-      x.onerror = function () { cb(null); };
-      x.ontimeout = function () { cb(null); };
-      x.send();
-    }
-    function goodUrl(txt) {
-      var t = String(txt == null ? '' : txt).trim();
-      return /^https:\/\//.test(t) ? t : null;
-    }
-    /* 1) raw (istantaneo) */
-    ask(NAS_URL_FILE + '?t=' + Date.now(), function (txt) {
-      var u = goodUrl(txt);
-      if (u) { done(u); return; }
-      /* 2) stesso dominio su GitHub Pages */
-      ask('nas-url.txt?t=' + Date.now(), function (txt2) {
-        done(goodUrl(txt2));
+  /* istanza viva non ancora provata in questo giro, altrimenti '' */
+  function ensureBase(tried, cb) {
+    pipedRefresh(false, function (base) {
+      if (base && (!tried || tried.indexOf(base) === -1)) { cb(base); return; }
+      pipedRefresh(true, function (base2) {
+        if (base2 && (!tried || tried.indexOf(base2) === -1)) { cb(base2); return; }
+        cb('');
       });
     });
   }
 
-  function engines() {
-    var list = [];
-    var custom = storageGet(ENGINE_KEY);
-    if (custom) {
-      // un custom trycloudflare vecchio (tunnel morto) è peggio di niente:
-      // lo si ignora solo se sappiamo qual è l'URL attuale del NAS e non
-      // coincide; senza discovery (worker assente) l'URL incollato è l'unico
-      // modo per puntare al NAS, quindi va accettato.
-      if (!(nasUrl && custom.indexOf('trycloudflare.com') !== -1 && custom !== nasUrl)) {
-        list.push(custom);
-      }
-    }
-    if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
-    /* l'ultimo engine che ha funzionato va provato per primo: converge
-       sull'engine sano e non spreca tentativi su quello giù. Se è un
-       tunnel morto di un riavvio precedente, ignoralo (lo scopriamo
-       dall'URL attuale del NAS). */
-    var good = storageGet(LAST_GOOD_KEY);
-    if (staleTunnel(good)) good = '';
-    if (good) {
-      for (var i = 1; i < list.length; i++) {
-        if (list[i] === good) {
-          list.splice(i, 1);
-          list.unshift(good);
-          break;
-        }
-      }
-    }
-    return list;
-  }
-
-  /* se l'engine risponde "bloccato, riprova tra Ns" (worker in backoff
-     anti-bot), ripete da solo l'intera sequenza di engine dopo N secondi,
-     fino a MAX_AUTO_RETRY volte: l'utente non deve fare nulla. Ogni attesa
-     e' limitata a 90s: anche se il worker consiglia di aspettare di piu',
-     un nuovo tentativo puo' cadere su un'altra istanza del worker non
-     bloccata (il backoff e' in memoria per istanza). */
-  var MAX_AUTO_RETRY = 5;
-  function retrySeconds(msg) {
-    var m = /^RETRY_AFTER_(\d+)$/.exec(String(msg));
-    return m ? parseInt(m[1], 10) : 0;
-  }
-
-  /* nome breve dell'engine per i messaggi di errore (NAS/custom) */
-  function engineLabel(u) {
-    if (!u) return '?';
-    if (u.indexOf('trycloudflare.com') !== -1) return 'NAS';
-    var host = u.replace(/^https?:\/\//, '').split('/')[0];
-    if (/^\d/.test(host)) return 'NAS (LAN)';
-    return host.split('.')[0] || 'engine';
-  }
-
-  /* chiama un endpoint JSON con fallback su piu' engine */
-  function callEngine(pathQuery, ok, err, maxAttempts, onRetry) {
-    var list = engines();
-    var idx = 0;
-    var lastErr = null;
-    var lastEngine = '';
-    var autoLeft = MAX_AUTO_RETRY;
-    var pendingWait = 0;
-    (function next() {
-      if (idx >= list.length) {
-        /* tutti gli engine hanno fallito: se qualcuno era in backoff
-           anti-bot, aspetta l'attesa piu' lunga e ricomincia da capo
-           (fino a MAX_AUTO_RETRY volte); altrimenti errore finale */
-        if (pendingWait > 0 && autoLeft > 0) {
-          autoLeft--;
-          var w = pendingWait;
-          pendingWait = 0;
-          idx = 0;
-          lastErr = null;
-          lastEngine = '';
-          if (onRetry) onRetry(w);
-          setTimeout(next, w * 1000);
-          return;
-        }
-        /* l'URL del NAS potrebbe essere cambiato (es. riavvio del NAS con
-           tunnel nuovo): riscopri subito così il prossimo tentativo usa
-           l'indirizzo aggiornato */
-        refreshNas(true);
-        err(lastErr ? friendlyMsg(lastErr) + ' (' + engineLabel(lastEngine) + ')' : 'all engines failed');
-        return;
-      }
-      var engine = list[idx++];
-      retryCall(
-        function (o, e) { xhrJson(engine + pathQuery, o, e); },
-        function (val) {
-          storageSet(LAST_GOOD_KEY, engine);
-          ok(val);
-        },
-        function (msg) {
-          var rs = retrySeconds(msg);
-          if (rs) {
-            /* engine in backoff: ricorda l'attesa e prova subito il
-               prossimo engine (NAS/worker 2 potrebbero non essere bloccati) */
-            pendingWait = Math.max(pendingWait, Math.min(rs, 90) + 2);
-            lastErr = msg;
-            lastEngine = engine;
-            next();
-            return;
-          }
-          lastErr = msg;
-          lastEngine = engine;
-          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg) + ' (' + engineLabel(engine) + ')');
-        },
-        maxAttempts || 6, 1500);
-    })();
-  }
-
-  /* chiama uno stream (blob) con fallback su piu' engine */
-  function callEngineStream(pathQuery, ok, err, onProgress, maxAttempts, onRetry) {
-    var list = engines();
-    var idx = 0;
-    var lastErr = null;
-    var autoLeft = MAX_AUTO_RETRY;
-    var pendingWait = 0;
-    (function next() {
-      if (idx >= list.length) {
-        if (pendingWait > 0 && autoLeft > 0) {
-          autoLeft--;
-          var w = pendingWait;
-          pendingWait = 0;
-          idx = 0;
-          lastErr = null;
-          if (onRetry) onRetry(w);
-          setTimeout(next, w * 1000);
-          return;
-        }
-        refreshNas(true);
-        err((lastErr === 'interrotto') ? 'interrotto' : (lastErr ? friendlyMsg(lastErr) : 'all engines failed'));
-        return;
-      }
-      var engine = list[idx++];
-      retryCall(
-        function (o, e) { xhrBlob(engine + pathQuery, o, e, onProgress); },
-        function (val) {
-          storageSet(LAST_GOOD_KEY, engine);
-          ok(val);
-        },
-        function (msg) {
-          var rs = retrySeconds(msg);
-          if (rs) {
-            pendingWait = Math.max(pendingWait, Math.min(rs, 90) + 2);
-            lastErr = msg;
-            next();
-            return;
-          }
-          lastErr = msg;
-          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
-        },
-        maxAttempts || 6, 1500);
-    })();
-  }
-
-  function xhrJson(url, ok, err) {
+  function xhrPipedJson(url, ok, err) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
+    x.timeout = 15000;
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
       if (x.status >= 200 && x.status < 300) {
         var data = null;
         try { data = JSON.parse(x.responseText); } catch (e) { err('invalid response'); return; }
+        /* le API Piped restituiscono {error: "..."} con HTTP 200 per i
+           fallimenti applicativi (es. blocco anti-bot di YouTube) */
+        if (data && data.error) { err(String(data.error)); return; }
         ok(data);
       } else {
-        var msg = 'errore ' + x.status;
-        try {
-          var j = JSON.parse(x.responseText);
-          if (j && j.retryAfter) msg = 'RETRY_AFTER_' + Math.max(5, parseInt(j.retryAfter, 10) || 5);
-          else if (j && j.message) msg = j.message;
-        } catch (e) { /* ignora */ }
-        err(msg);
+        err('errore ' + x.status);
       }
     };
     x.onerror = function () { err('network error'); };
+    x.ontimeout = function () { err('network error'); };
     x.send();
+  }
+
+  /* ripulisce il messaggio di errore di Piped (traceback Java multi-riga) */
+  function pipedErrMsg(raw) {
+    var s = String(raw == null ? '' : raw);
+    s = s.split('\n')[0];
+    if (s.length > 160) s = s.slice(0, 160);
+    return s;
+  }
+
+  function pipedGet(path, ok, err, maxAttempts) {
+    var maxA = maxAttempts || 4;
+    var tried = [];
+    (function go() {
+      ensureBase(tried, function (base) {
+        if (!base) { err(t('piped-none')); return; }
+        tried.push(base);
+        xhrPipedJson(base + path,
+          function (data) { ok(data); },
+          function (msg) {
+            /* istanza giù o bloccata: riprova (un'altra istanza può essere
+               viva, o YouTube può aver sbloccato) con attesa crescente */
+            if (tried.length < maxA && shouldRetry(msg)) {
+              setTimeout(go, 1000 * tried.length);
+            } else {
+              err(msg);
+            }
+          });
+      });
+    })();
+  }
+
+  function retrySeconds(msg) {
+    var m = /^RETRY_AFTER_(\d+)$/.exec(String(msg));
+    return m ? parseInt(m[1], 10) : 0;
   }
 
   function friendlyMsg(raw) {
@@ -516,43 +396,153 @@
     return s;
   }
 
-  function fetchFormats(id, ok, err, onRetry) {
-    callEngine('/formats?id=' + encodeURIComponent(id), ok, err, 6, onRetry);
+  /* ---------- mapping dei dati Piped ---------- */
+
+  function vidFromUrl(u) {
+    var m = String(u || '').match(/[?&]v=([\w-]{6,20})/);
+    return m ? m[1] : '';
   }
 
-  function xhrBlob(url, ok, err, onProgress) {
+  function fmtViews(n) {
+    n = parseInt(n, 10) || 0;
+    if (n >= 1000000000) return (n / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B';
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return String(n);
+  }
+
+  /* normalizza un item di ricerca/playlist di Piped nel modello della pagina */
+  function pipedItem(it) {
+    var id = vidFromUrl(it.url);
+    return {
+      id: id,
+      title: it.title || '',
+      author: it.uploaderName || '',
+      duration: fmtDur(it.duration),
+      views: fmtViews(it.views),
+      thumb: it.thumbnail || thumbFor(id)
+    };
+  }
+
+  function pipedSearch(q, ok, err) {
+    pipedGet('/search?q=' + encodeURIComponent(q) + '&filter=all', function (data) {
+      var items = (data && data.items) || [];
+      var out = [];
+      for (var i = 0; i < items.length; i++) out.push(pipedItem(items[i]));
+      ok(out);
+    }, err, 4);
+  }
+
+  /* un singolo stream Piped -> formato della pagina */
+  function fmtFromStream(s, isAudio) {
+    var q = String(s.quality || '');
+    var height = parseInt(String(q).match(/(\d+)/), 10) || 0;
+    var kbps = Math.round((s.bitrate || 0) / 1000);
+    var label;
+    if (isAudio) {
+      label = kbps > 0 ? kbps + ' kbps' : (q || 'audio');
+    } else {
+      label = height > 0 ? (q.indexOf('60') !== -1 ? height + 'p60' : height + 'p') : (q || 'video');
+    }
+    return {
+      itag: String(s.itag),
+      label: label,
+      mime: s.mimeType || '',
+      size: (s.contentLength && s.contentLength > 0) ? s.contentLength : 0,
+      url: s.url || '',
+      height: height,
+      kbps: kbps
+    };
+  }
+
+  function byHeight(x, y) { return y.height - x.height; }
+  function byKbps(x, y) { return y.kbps - x.kbps; }
+
+  /* /streams/{id} -> { info, audio, progressive, video } */
+  function pipedFormats(id, ok, err) {
+    pipedGet('/streams/' + encodeURIComponent(id), function (data) {
+      var audio = [], progressive = [], video = [];
+      var a = data.audioStreams || [];
+      for (var i = 0; i < a.length; i++) if (a[i].url) audio.push(fmtFromStream(a[i], true));
+      var vs = data.videoStreams || [];
+      for (var j = 0; j < vs.length; j++) {
+        var s = vs[j];
+        if (!s.url || s.itag < 0) continue;             /* LBRY: non YouTube */
+        if (s.videoOnly) video.push(fmtFromStream(s, false));
+        else progressive.push(fmtFromStream(s, false));
+      }
+      var prog = data.video || [];
+      for (var k = 0; k < prog.length; k++) if (prog[k].url) progressive.push(fmtFromStream(prog[k], false));
+      audio.sort(byKbps);
+      progressive.sort(byHeight);
+      video.sort(byHeight);
+      ok({
+        info: {
+          id: id,
+          title: data.title || '',
+          author: data.uploader || '',
+          seconds: data.duration || 0,
+          thumb: data.thumbnailUrl || thumbFor(id)
+        },
+        audio: audio,
+        progressive: progressive,
+        video: video
+      });
+    }, err, 5);
+  }
+
+  /* migliore stream per anteprima/zip: audio-only, altrimenti muxed, altrimenti video */
+  function pickStream(fmts) {
+    if (fmts.audio.length) return fmts.audio[0];
+    if (fmts.progressive.length) return fmts.progressive[0];
+    if (fmts.video.length) return fmts.video[0];
+    return null;
+  }
+
+  function pipedPlaylist(list, ok, err) {
+    var tries = 0;
+    (function go() {
+      pipedGet('/playlists/' + encodeURIComponent(list), function (data) {
+        var items = (data && data.relatedStreams) || [];
+        /* il blocco anti-bot di YouTube è intermittente: una playlist
+           vuota con nome presente = estrazione fallita, riprova una volta */
+        if (!items.length && data && data.name && tries < 1) {
+          tries++;
+          setTimeout(go, 2000);
+          return;
+        }
+        var out = [];
+        for (var i = 0; i < items.length; i++) out.push(pipedItem(items[i]));
+        ok({ name: (data && data.name) || '', items: out });
+      }, err, 3);
+    })();
+  }
+
+  /* scarica i byte di uno stream (URL diretto Piped, CORS permissivo) */
+  function xhrBlobUrl(url, ok, err, onProgress) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
     x.responseType = 'blob';
     if (onProgress) x.onprogress = function (e) { if (e.lengthComputable) onProgress(e.loaded, e.total); };
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
-      if (x.status >= 200 && x.status < 300 && x.response) {
-        ok(x.response);
-        return;
-      }
-      /* status 0 = richiesta annullata o rete interrotta (blob non leggibile) */
+      if (x.status >= 200 && x.status < 300 && x.response) { ok(x.response); return; }
       if (x.status === 0) { err('interrotto'); return; }
-      /* errore: prova a estrarre il messaggio dal body (json di errore dell'engine) */
-      if (x.response && typeof FileReader !== 'undefined') {
-        var r = new FileReader();
-        r.onload = function () {
-          var msg = 'errore ' + x.status;
-          try {
-            var j = JSON.parse(r.result);
-            if (j && j.retryAfter) msg = 'RETRY_AFTER_' + Math.max(5, parseInt(j.retryAfter, 10) || 5);
-            else if (j && j.message) msg = j.message;
-          } catch (e) { /* body non json */ }
-          err(friendlyMsg(msg));
-        };
-        r.onerror = function () { err('errore ' + x.status); };
-        r.readAsText(x.response);
-      } else {
-        err('errore ' + x.status);
-      }
+      err('errore ' + x.status);
     };
     x.onerror = function () { err('network error'); };
     x.send();
+  }
+
+  function renderPipedStatus() {
+    var el = $('piped-status');
+    if (!el) return;
+    if (pipedBase) {
+      var host = pipedBase.replace(/^https?:\/\//, '').split('/')[0];
+      el.textContent = t('piped-label') + ' \u00B7 ' + host;
+    } else {
+      el.textContent = t('piped-checking');
+    }
   }
 
   /* ---------- stato ---------- */
@@ -644,7 +634,7 @@
     meta.appendChild(sub);
     li.appendChild(meta);
 
-    bindPlay(playBtn, li, item);
+    bindPlay(playBtn, li, item, statusId);
     bindDownload(li, dlBtn, item, t('download'), statusId);
 
     /* sincronizza lo stato della checkbox con la selezione corrente */
@@ -654,7 +644,7 @@
     return li;
   }
 
-  function bindPlay(btn, row, item) {
+  function bindPlay(btn, row, item, statusId) {
     btn.addEventListener('click', function () {
       var preview = row.querySelector('.preview');
       if (preview) {
@@ -667,34 +657,43 @@
       var audio = document.createElement('audio');
       audio.controls = true;
       audio.preload = 'none';
-      audio.src = bestEngine() + '/stream?id=' + encodeURIComponent(item.id);
       p.appendChild(audio);
       row.appendChild(p);
       btn.textContent = '\u25A0';
-      try { audio.play(); } catch (e) { /* browser vecchi: l'utente preme play */ }
+      setStatus(statusId || 'search-status', t('loading-stream'), false);
+      pipedFormats(item.id,
+        function (fmts) {
+          clearStatus(statusId || 'search-status');
+          var fmt = pickStream(fmts);
+          if (!fmt) { setStatus(statusId || 'search-status', t('zip-unavailable'), true); return; }
+          audio.src = fmt.url;
+          try { audio.play(); } catch (e) { /* browser vecchi: l'utente preme play */ }
+        },
+        function (msg) {
+          setStatus(statusId || 'search-status', tF('formats-err', friendlyMsg(pipedErrMsg(msg))), true);
+        });
     });
   }
 
   /* "Scarica" apre un picker (audio/video, qualita') e poi avvia il download */
-  function bindDownload(container, btn, item, label, statusId) {
+  function bindDownload(container, btn, item, label, statusId, cachedFmts) {
     btn.addEventListener('click', function () {
       if (btn.getAttribute('data-busy') === '1') return;
       btn.setAttribute('data-busy', '1');
-      btn.textContent = '…';
-      fetchFormats(item.id,
-        function (fmts) {
-          btn.removeAttribute('data-busy');
-          btn.textContent = label;
-          buildPicker(container, item, fmts, label, statusId);
-        },
+      btn.textContent = '\u2026';
+      function got(fmts) {
+        btn.removeAttribute('data-busy');
+        btn.textContent = label;
+        buildPicker(container, item, fmts, label, statusId);
+      }
+      if (cachedFmts) { got(cachedFmts); return; }
+      pipedFormats(item.id,
+        got,
         function (msg) {
           btn.removeAttribute('data-busy');
           btn.textContent = t('error');
-          setStatus(statusId || 'search-status', tF('formats-err', friendlyMsg(msg)), true);
+          setStatus(statusId || 'search-status', tF('formats-err', friendlyMsg(pipedErrMsg(msg))), true);
           setTimeout(function () { btn.textContent = label; }, 2200);
-        },
-        function (secs) {
-          setStatus(statusId || 'search-status', tF('retry-wait', secs), false);
         });
     });
   }
@@ -718,8 +717,12 @@
       for (var i = 0; i < list.length; i++) {
         var o = document.createElement('option');
         o.value = String(list[i].itag);
-        o.textContent = list[i].label + (list[i].size ? ' · ' + fmtBytes(list[i].size) : '');
-        o.setAttribute('data-mime', list[i].mime || '');
+        o.textContent = list[i].label + (list[i].size ? ' \u00B7 ' + fmtBytes(list[i].size) : '');
+        o.setAttribute('data-fmt', JSON.stringify({
+          url: list[i].url,
+          mime: list[i].mime || '',
+          ext: extForMime(list[i].mime || '')
+        }));
         g.appendChild(o);
       }
       sel.appendChild(g);
@@ -749,55 +752,36 @@
 
     go.addEventListener('click', function () {
       var opt = sel.options[sel.selectedIndex];
-      var itag = opt.value;
-      var ext = extForMime(opt.getAttribute('data-mime') || '');
+      var fmt = null;
+      try { fmt = JSON.parse(opt.getAttribute('data-fmt') || 'null'); } catch (e) { /* ignora */ }
+      if (!fmt || !fmt.url) return;
       close();
-      startDownload(item, itag, ext, go, label, statusId, container);
+      startDownload(item, fmt, label, statusId, container);
     });
   }
 
-  /* avvia il download di un singolo formato (itag); mostra una barra di
-     progresso nel container (il pulsante del picker viene rimosso dal DOM
-     quando il picker si chiude, quindi la % sul pulsante non sarebbe visibile). */
-  function startDownload(item, itag, ext, btn, label, statusId, container) {
+  /* avvia il download di un singolo formato (URL diretto Piped); mostra una
+     barra di progresso nel container (il pulsante del picker viene rimosso
+     dal DOM quando il picker si chiude, quindi la % sul pulsante non
+     sarebbe visibile). */
+  function startDownload(item, fmt, label, statusId, container) {
     var title = item.title || item.id;
-    var path = '/stream?id=' + encodeURIComponent(item.id) +
-      '&itag=' + encodeURIComponent(itag) +
-      '&name=' + encodeURIComponent(title);
+    if (!fmt || !fmt.url) {
+      setStatus(statusId || 'search-status', tF('download-err', t('zip-unavailable')), true);
+      return;
+    }
+    var ext = fmt.ext || extForMime(fmt.mime || '');
     var bar = attachProgress(container);
-    btn.setAttribute('data-busy', '1');
-    btn.textContent = '…';
-    function finish() { bar.done(); }
-    callEngineStream(
-      path,
+    xhrBlobUrl(fmt.url,
       function (blob) {
         saveBlob(blob, sanitizeTitle(title) + '.' + ext, statusId);
-        btn.textContent = t('saved');
-        finish();
-        reset();
+        bar.done();
       },
       function (msg) {
-        btn.textContent = t('error');
-        setStatus(statusId || 'search-status', tF('download-err', friendlyMsg(msg)), true);
-        finish();
-        reset();
+        setStatus(statusId || 'search-status', tF('download-err', friendlyMsg(pipedErrMsg(msg))), true);
+        bar.done();
       },
-      function (loaded, total) {
-        if (total) {
-          setBar(bar.el, loaded / total);
-          btn.textContent = Math.round(loaded / total * 100) + '%';
-        }
-      },
-      3,
-      function (secs) {
-        setStatus(statusId || 'search-status', tF('retry-wait', secs), false);
-      });
-    function reset() {
-      setTimeout(function () {
-        btn.removeAttribute('data-busy');
-        btn.textContent = label;
-      }, 2200);
-    }
+      function (loaded, total) { if (total) setBar(bar.el, loaded / total); });
   }
 
   function sanitizeTitle(t) {
@@ -835,14 +819,22 @@
   /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
   function fetchAudio(item, itag, ext, onProgress, onDone, onErr) {
     var title = item.title || item.id;
-    var path = '/stream?id=' + encodeURIComponent(item.id) +
-      (itag ? '&itag=' + encodeURIComponent(itag) : '') +
-      '&name=' + encodeURIComponent(title);
-    callEngineStream(
-      path,
-      function (blob) { onDone(blob, sanitizeTitle(title) + '.' + (ext || 'm4a')); },
-      function (msg) { onErr(friendlyMsg(msg)); },
-      onProgress);
+    pipedFormats(item.id,
+      function (fmts) {
+        var fmt = null;
+        if (itag) {
+          for (var i = 0; i < fmts.audio.length; i++) if (fmts.audio[i].itag === itag) { fmt = fmts.audio[i]; break; }
+          if (!fmt) for (var j = 0; j < fmts.progressive.length; j++) if (fmts.progressive[j].itag === itag) { fmt = fmts.progressive[j]; break; }
+        }
+        if (!fmt) fmt = pickStream(fmts);
+        if (!fmt) { onErr(t('zip-unavailable')); return; }
+        var e = ext || extForMime(fmt.mime || '');
+        xhrBlobUrl(fmt.url,
+          function (blob) { onDone(blob, sanitizeTitle(title) + '.' + e); },
+          function (msg) { onErr(friendlyMsg(pipedErrMsg(msg))); },
+          onProgress);
+      },
+      function (msg) { onErr(friendlyMsg(pipedErrMsg(msg))); });
   }
 
   function saveBlob(blob, name, statusId) {
@@ -1069,20 +1061,25 @@
     r.readAsArrayBuffer(blob);
   }
 
-  /* scarica una canzone come bytes per lo zip: stream senza itag (il worker
-     sceglie il miglior audio), estensione dal Content-Type del blob. */
+  /* scarica una canzone come bytes per lo zip: miglior stream disponibile
+     (audio-only se c'è, altrimenti muxed), estensione dal Content-Type. */
   function fetchZipItem(item, ok, err, onProgress) {
-    callEngineStream(
-      '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(item.title || item.id),
-      function (blob) {
-        blobBytes(blob, function (bytes) {
-          if (!bytes || !bytes.length) { err(t('zip-unavailable')); return; }
-          var mime = blob.type || 'audio/mp4';
-          ok(sanitizeTitle(item.title || item.id) + '.' + extForMime(mime), bytes);
-        });
+    pipedFormats(item.id,
+      function (fmts) {
+        var fmt = pickStream(fmts);
+        if (!fmt) { err(t('zip-unavailable')); return; }
+        xhrBlobUrl(fmt.url,
+          function (blob) {
+            blobBytes(blob, function (bytes) {
+              if (!bytes || !bytes.length) { err(t('zip-unavailable')); return; }
+              var mime = blob.type || fmt.mime || 'video/mp4';
+              ok(sanitizeTitle(item.title || item.id) + '.' + extForMime(mime), bytes);
+            });
+          },
+          function (msg) { err(friendlyMsg(pipedErrMsg(msg))); },
+          onProgress);
       },
-      function (msg) { err(friendlyMsg(msg)); },
-      onProgress, 3, null);
+      function (msg) { err(friendlyMsg(pipedErrMsg(msg))); });
   }
 
   function downloadZip(zipBtn) {
@@ -1145,19 +1142,17 @@
   /* ---------- ricerca ---------- */
 
   function doSearch(q) {
-    if (!engines().length) { setStatus('search-status', engineMissingMsg(), true); return; }
     clearStatus('search-status');
     var list = $('search-results');
     list.innerHTML = '';
     setStatus('search-status', t('searching'));
-    callEngine('/search?q=' + encodeURIComponent(q),
-      function (data) {
+    pipedSearch(q,
+      function (results) {
         clearStatus('search-status');
-        var results = (data && data.results) || [];
         if (!results.length) { setStatus('search-status', tF('no-results', q), true); return; }
         for (var i = 0; i < results.length; i++) list.appendChild(buildRow(results[i], 'search-status'));
       },
-      function (msg) { setStatus('search-status', tF('search-err', friendlyMsg(msg)), true); });
+      function (msg) { setStatus('search-status', tF('search-err', friendlyMsg(pipedErrMsg(msg))), true); });
   }
 
   /* ---------- link incollato ---------- */
@@ -1173,12 +1168,6 @@
     if (!vid) { m = u.match(/youtu\.be\/([\w-]{6,20})/); if (m) vid = m[1]; }
     if (!vid && !list) return null;
     return { vid: vid, list: list };
-  }
-
-  function oembed(url, cb) {
-    xhrJson('https://www.youtube.com/oembed?url=' + encodeURIComponent(url) + '&format=json',
-      function (data) { cb(data); },
-      function () { cb(null); });
   }
 
   function buildCard(cover, title, sub, actionsHtml, extra) {
@@ -1219,7 +1208,6 @@
 
     var parsed = parseYtUrl(raw);
     if (!parsed) { setStatus('link-status', t('link-unrecognized'), true); return; }
-    if (!engines().length) { setStatus('link-status', engineMissingMsg(), true); return; }
 
     if (parsed.list) {
       openPlaylist(parsed.list);
@@ -1229,98 +1217,86 @@
   }
 
   function openVideo(vid) {
-    var engine = bestEngine();
     var box = $('link-preview');
     var card = buildCard(thumbFor(vid), '\u2026', '\u2026', '', null);
     box.appendChild(card);
-    oembed('https://www.youtube.com/watch?v=' + vid, function (o) {
-      var title = (o && o.title) || '\u2026';
-      var author = (o && o.author_name) || '';
-      var sub = author ? author : '\u2026';
-      card.querySelector('.card-title').textContent = title;
-      card.querySelector('.card-sub').textContent = sub;
-      if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
-    });
-    /* pulsanti subito visibili (non dipendono da /info) */
     var actions = document.createElement('div');
     actions.className = 'card-actions';
     card.querySelector('.card-body').appendChild(actions);
-
     var previewWrap = document.createElement('div');
     previewWrap.className = 'card-preview';
     card.appendChild(previewWrap);
 
-    /* anteprima audio */
-    var play = document.createElement('button');
-    play.type = 'button';
-    play.className = 'btn btn-play';
-    play.textContent = '\u25B6';
-    play.setAttribute('aria-label', t('preview-audio'));
-    actions.appendChild(play);
-    play.addEventListener('click', function () {
-      if (previewWrap.innerHTML) {
-        previewWrap.innerHTML = '';
-        play.textContent = '\u25B6';
-        return;
-      }
-      var audio = document.createElement('audio');
-      audio.controls = true;
-      audio.preload = 'none';
-      audio.src = engine + '/stream?id=' + encodeURIComponent(vid);
-      previewWrap.appendChild(audio);
-      play.textContent = '\u25A0';
-      try { audio.play(); } catch (e) { /* ok */ }
-    });
-
-    /* pulsante Scarica sempre presente (anche se /info fallisse) */
-    var setupDl = function (titleText, authorText) {
-      var dl = actions.querySelector('.btn-dl-main');
-      if (!dl) {
-        dl = document.createElement('button');
-        dl.type = 'button';
-        dl.className = 'btn btn-primary btn-dl-main';
-        actions.appendChild(dl);
-      }
-      var item = { id: vid, title: titleText || '', author: authorText || '' };
-      dl.textContent = t('download');
-      bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status');
-    };
-    setupDl('', '');
-
-    /* info in background: durata + titolo (fallire non blocca il download) */
-    callEngine('/info?id=' + encodeURIComponent(vid),
-      function (info) {
+    setStatus('link-status', t('loading-info'), false);
+    pipedFormats(vid,
+      function (fmts) {
+        clearStatus('link-status');
+        var info = fmts.info;
+        card.querySelector('.card-title').textContent = info.title || '\u2026';
         var subEl = card.querySelector('.card-sub');
         var bits = [];
         if (info.author) bits.push(info.author);
         if (info.seconds) bits.push(fmtDur(info.seconds));
-        if (info.size) bits.push(fmtBytes(info.size));
-        if (bits.length) subEl.textContent = bits.join(' \u00B7 ');
-        card.querySelector('.card-title').textContent = info.title || card.querySelector('.card-title').textContent;
-        var dl = actions.querySelector('.btn-dl-main');
-        bindDownload(card.querySelector('.card-body'), dl, { id: vid, title: info.title || '', author: info.author || '' }, t('download'), 'link-status');
+        subEl.textContent = bits.join(' \u00B7 ') || '\u2026';
+        if (info.thumb && info.thumb !== thumbFor(vid)) card.querySelector('.card-cover').src = info.thumb;
+
+        var fmt = pickStream(fmts);
+
+        /* anteprima audio */
+        var play = document.createElement('button');
+        play.type = 'button';
+        play.className = 'btn btn-play';
+        play.textContent = '\u25B6';
+        play.setAttribute('aria-label', t('preview-audio'));
+        actions.appendChild(play);
+        if (fmt) {
+          play.addEventListener('click', function () {
+            if (previewWrap.innerHTML) {
+              previewWrap.innerHTML = '';
+              play.textContent = '\u25B6';
+              return;
+            }
+            var audio = document.createElement('audio');
+            audio.controls = true;
+            audio.preload = 'none';
+            audio.src = fmt.url;
+            previewWrap.appendChild(audio);
+            play.textContent = '\u25A0';
+            try { audio.play(); } catch (e) { /* ok */ }
+          });
+        } else {
+          play.disabled = true;
+        }
+
+        /* scarica (riusa i formati già estratti) */
+        var dl = document.createElement('button');
+        dl.type = 'button';
+        dl.className = 'btn btn-primary btn-dl-main';
+        actions.appendChild(dl);
+        dl.textContent = t('download');
+        var item = { id: vid, title: info.title || '', author: info.author || '' };
+        bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status', fmts);
       },
-      function () { /* ignora: il download usa /formats, non /info */ });
+      function (msg) {
+        setStatus('link-status', tF('formats-err', friendlyMsg(pipedErrMsg(msg))), true);
+      });
   }
 
   function openPlaylist(list) {
     var box = $('link-preview');
     var card = buildCard(thumbFor(''), 'Playlist', '\u2026', '', null);
     box.appendChild(card);
-    oembed('https://www.youtube.com/playlist?list=' + list, function (o) {
-      if (o && o.title) card.querySelector('.card-title').textContent = o.title;
-      if (o && o.thumbnail_url) card.querySelector('.card-cover').src = o.thumbnail_url;
-    });
-    setStatus('link-status', t('loading-tracks'));
-    callEngine('/playlist?list=' + encodeURIComponent(list),
+    setStatus('link-status', t('loading-tracks'), false);
+    pipedPlaylist(list,
       function (data) {
         clearStatus('link-status');
-        if (!data || !data.items || !data.items.length) {
+        var items = data.items || [];
+        if (!items.length) {
           setStatus('link-status', t('playlist-empty'), true);
           return;
         }
-        if (data.title) card.querySelector('.card-title').textContent = data.title;
-        var n = data.items.length;
+        if (data.name) card.querySelector('.card-title').textContent = data.name;
+        var n = items.length;
         var subEl = card.querySelector('.card-sub');
         var bits = subEl.textContent ? [subEl.textContent] : [];
         bits.push(tF('tracks-count', n));
@@ -1349,12 +1325,12 @@
         actions.appendChild(qsel);
         actions.appendChild(all);
         card.querySelector('.card-body').appendChild(actions);
-        downloadAll(all, data.items, qsel);
+        downloadAll(all, items, qsel);
 
         var listEl = $('link-tracks');
-        for (var i = 0; i < data.items.length; i++) listEl.appendChild(buildRow(data.items[i], 'link-status'));
+        for (var i = 0; i < items.length; i++) listEl.appendChild(buildRow(items[i], 'link-status'));
       },
-      function (msg) { setStatus('link-status', tF('playlist-err', friendlyMsg(msg)), true); });
+      function (msg) { setStatus('link-status', tF('playlist-err', friendlyMsg(pipedErrMsg(msg))), true); });
   }
 
   function downloadAll(btn, items, qsel) {
@@ -1387,28 +1363,6 @@
           function (blob, name) { saveBlob(blob, name); i++; next(); },
           function () { i++; next(); });
       })();
-    });
-  }
-
-  /* ---------- engine url ---------- */
-
-  function renderEngineUrl() {
-    var el = $('engine-url');
-    var u = engineUrl();
-    el.textContent = u || t('engine-not-configured');
-    if (el && nasUrl) el.textContent = nasUrl + '  (' + t('engine-nas-active') + ')  \u2192 ' + (u || t('engine-not-configured'));
-  }  function bindEngineChange() {
-    $('engine-change').addEventListener('click', function () {
-      var cur = engineUrl();
-      var v = window.prompt(t('engine-change-prompt'), cur);
-      if (v === null) return;              /* annullato */
-      v = String(v || '').replace(/^\s+|\s+$/g, '');
-      if (!v) { storageDel(ENGINE_KEY); renderEngineUrl(); return; }
-      if (!/^https?:\/\//.test(v)) { window.alert(t('engine-change-invalid')); return; }
-
-      storageSet(ENGINE_KEY, v);
-      refreshNas(true);                    /* rivaluta subito l'ordine engine */
-      renderEngineUrl();
     });
   }
 
@@ -1473,211 +1427,11 @@
 
   /* hook minimo per test/debug */
   window.__ytdAutoUpdate = { checkVersion: checkVersion, busy: anyDownloadBusy, version: YTD_VER };
-  window.__ytdNas = { engines: engines, get: function () { return nasUrl; } };
-
-  /* ---------- modalità browser (yt-dlp.wasm) ----------
-     Quando l'engine NAS è bloccato da YouTube, si può estrarre i metadata
-     direttamente nel browser: yt-dlp gira in WebAssembly (Pyodide) e parla
-     con YouTube attraverso il proxy CORS del NAS (server/index.js /proxy),
-     che YouTube tratta come un client diverso dal nostro engine. I byte
-     audio/video poi scendono diretti dal CDN (o via lo stesso proxy se il
-     CDN non manda CORS). Solo per browser moderni (~2023+). */
-
-  var BM_SUPPORTED = (typeof WebAssembly !== 'undefined' &&
-    typeof Worker === 'function' && typeof fetch === 'function' &&
-    typeof Promise === 'function');
-  var bmWorker = null;
-  var bmBusy = false;
-  var bmSeq = 0;
-  var bmCbs = {};
-
-  function bmShowSupported() {
-    var btn = $('bm-btn');
-    if (btn) btn.hidden = !BM_SUPPORTED;
-  }
-
-  function bmEnsure(errCb) {
-    if (bmWorker) return true;
-    try {
-      bmWorker = new Worker('browser/worker.js');
-    } catch (e) { errCb(String(e)); return false; }
-    bmWorker.onmessage = function (ev) {
-      var m = ev.data || {};
-      if (m.type === 'result') {
-        var h = bmCbs[m.id];
-        if (h) { delete bmCbs[m.id]; h.cb(m.payload); }
-      } else if (m.type === 'error') {
-        var h2 = bmCbs[m.id];
-        if (h2) { delete bmCbs[m.id]; h2.err(m.payload); }
-      } else if (m.type === 'log') {
-        /* log di Pyodide/yt-dlp: mostrali nello status per diagnosi */
-        var st = $('link-status');
-        if (st) {
-          st.textContent = String(m.payload || '');
-          st.hidden = false;
-          removeClass(st, 'is-error');
-        }
-      }
-    };
-    /* proxy metadata = NAS (bestEngine): fire-and-forget, avvia il boot */
-    bmWorker.postMessage({ id: 0, method: 'configure', args: { metadataProxy: bestEngine() || '' } });
-    return true;
-  }
-
-  function bmCall(method, args, cb, errCb) {
-    var id = ++bmSeq;
-    bmCbs[id] = { cb: cb, err: errCb };
-    bmWorker.postMessage({ id: id, method: method, args: args || {} });
-  }
-
-  function bmExtract(url, cb, errCb) {
-    if (!bmEnsure(errCb)) return;
-    bmCall('extract', { url: url }, cb, errCb);
-  }
-
-  /* scarica i byte: prima fetch diretto (il CDN googlevideo manda CORS per
-     gli URL estratti da yt-dlp), se il browser lo blocca ripiega sul proxy
-     CORS del NAS (/proxy?url=...) che streama i byte con CORS permissivi. */
-  function bmFetchBytes(url, onProgress, ok, err) {
-    var done = false;
-    var x = new XMLHttpRequest();
-    x.open('GET', url, true);
-    x.responseType = 'blob';
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4 || done) return;
-      if (x.status >= 200 && x.status < 300) { done = true; ok(x.response); }
-      else { done = true; bmFetchProxy(url, onProgress, ok, err); }
-    };
-    x.onerror = function () { if (!done) { done = true; bmFetchProxy(url, onProgress, ok, err); } };
-    x.send();
-  }
-
-  function bmFetchProxy(url, onProgress, ok, err) {
-    var proxy = bestEngine();
-    if (!proxy) { err(t('bm-proxy-missing')); return; }
-    var x = new XMLHttpRequest();
-    x.open('GET', proxy + '/proxy?url=' + encodeURIComponent(url), true);
-    x.responseType = 'blob';
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      if (x.status >= 200 && x.status < 300) ok(x.response);
-      else err('errore ' + x.status);
-    };
-    x.onerror = function () { err('network error'); };
-    x.onprogress = function (e) { if (e.lengthComputable) onProgress(e.loaded, e.total); };
-    x.send();
-  }
-
-  function bmFormats(info) {
-    var formats = info.formats || [];
-    var audio = [], progressive = [], video = [];
-    for (var i = 0; i < formats.length; i++) {
-      var f = formats[i];
-      if (!f.url) continue;
-      var v = f.vcodec && f.vcodec !== 'none';
-      var a = f.acodec && f.acodec !== 'none';
-      if (v && a) progressive.push(f);
-      else if (a && !v) audio.push(f);
-      else if (v && !a) video.push(f);
-    }
-    audio.sort(function (x, y) { return (y.tbr || 0) - (x.tbr || 0); });
-    progressive.sort(function (x, y) { return (y.height || 0) - (x.height || 0); });
-    video.sort(function (x, y) { return (y.height || 0) - (x.height || 0); });
-    return { audio: audio, progressive: progressive, video: video };
-  }
-
-  function bmShowCard(info) {
-    var box = $('link-preview');
-    box.innerHTML = '';
-    var vid = info.id || '';
-    var card = buildCard(info.thumbnail || thumbFor(vid), info.title || '', '', '');
-    box.appendChild(card);
-
-    var sel = document.createElement('select');
-    sel.className = 'picker-select';
-    sel.setAttribute('aria-label', t('quality'));
-    var groups = bmFormats(info);
-    function addGroup(label, list) {
-      if (!list.length) return;
-      var g = document.createElement('optgroup');
-      g.label = label;
-      for (var i = 0; i < list.length; i++) {
-        var f = list[i];
-        var o = document.createElement('option');
-        o.value = String(i);
-        o.setAttribute('data-fmt', JSON.stringify({ url: f.url, ext: f.ext || 'm4a', mime: f.mime_type || '' }));
-        var bits = [];
-        if (f.height) bits.push(f.height + 'p');
-        if (f.tbr) bits.push(Math.round(f.tbr) + ' kbps');
-        if (f.filesize) bits.push(fmtBytes(f.filesize));
-        if (f.format_note) bits.push(f.format_note);
-        o.textContent = bits.length ? bits.join(' · ') : (f.format_id || '?');
-        g.appendChild(o);
-      }
-      sel.appendChild(g);
-    }
-    addGroup(t('group-audio'), groups.audio);
-    addGroup(t('group-video-mixed'), groups.progressive);
-    addGroup(t('group-video-only'), groups.video);
-
-    var body = card.querySelector('.card-body');
-    var wrap = document.createElement('div');
-    wrap.className = 'picker';
-    wrap.appendChild(sel);
-    var go = document.createElement('button');
-    go.type = 'button';
-    go.className = 'btn btn-dl';
-    go.textContent = t('download');
-    wrap.appendChild(go);
-    body.appendChild(wrap);
-
-    go.addEventListener('click', function () {
-      var opt = sel.options[sel.selectedIndex];
-      var raw = opt ? opt.getAttribute('data-fmt') : null;
-      if (!raw) return;
-      var fmt = null;
-      try { fmt = JSON.parse(raw); } catch (e) { /* ignora */ }
-      if (!fmt || !fmt.url) return;
-      var name = sanitizeTitle(info.title || info.id) + '.' + (fmt.ext || 'm4a');
-      var bar = attachProgress(wrap);
-      setStatus('link-status', '', false);
-      bmFetchBytes(fmt.url,
-        function (loaded, total) { if (total) setBar(bar.el, loaded / total); },
-        function (blob) {
-          saveBlob(blob, name, 'link-status');
-          setStatus('link-status', t('saved'), false);
-          bar.done();
-        },
-        function (msg) { setStatus('link-status', tF('download-err', friendlyMsg(msg)), true); bar.done(); });
-    });
-    setStatus('link-status', t('bm-ok'), false);
-  }
-
-  function bindBm() {
-    var btn = $('bm-btn');
-    if (!btn) return;
-    bmShowSupported();
-    btn.addEventListener('click', function () {
-      if (bmBusy) return;
-      var raw = $('link-input').value;
-      var parsed = parseYtUrl(raw);
-      if (!parsed || !parsed.vid) { setStatus('link-status', t('link-unrecognized'), true); return; }
-      if (!BM_SUPPORTED) { setStatus('link-status', t('bm-unsupported'), true); return; }
-      if (!bestEngine()) { setStatus('link-status', t('bm-proxy-missing'), true); return; }
-      bmBusy = true;
-      setStatus('link-status', t('bm-start'), false);
-      bmExtract('https://www.youtube.com/watch?v=' + parsed.vid,
-        function (info) {
-          bmBusy = false;
-          clearStatus('link-status');
-          bmShowCard(info);
-        },
-        function (msg) {
-          bmBusy = false;
-          setStatus('link-status', tF('bm-extract-err', friendlyMsg(msg)), true);
-        });
-    });
-  }
+  window.__ytdPiped = {
+    base: function () { return pipedBase; },
+    refresh: function (cb) { pipedRefresh(true, cb); },
+    pool: PIPED_POOL
+  };
 
   /* ---------- init ---------- */
 
@@ -1685,20 +1439,12 @@
     bindLang();
     applyLang();
     bindTabs();
-    renderEngineUrl();
-    bindEngineChange();
     bindSelTray();
-    bindBm();
     renderVersion();
-    /* discovery best-effort del NAS self-host (l'URL del tunnel cambia a
-       ogni riavvio: la pagina lo chiede al worker, che lo riceve dal NAS;
-       senza worker si incolla l'URL a mano dal footer) */
-    window.__ytdOnNas = function (u) {
-      nasUrl = u;
-      renderEngineUrl();
-    };
-    refreshNas(false);
-    setInterval(function () { refreshNas(false); }, NAS_TTL);
+    /* discovery delle istanze Piped pubbliche (health check sul pool) */
+    window.__ytdOnPiped = function (u) { pipedBase = u; renderPipedStatus(); };
+    pipedRefresh(false, function () { renderPipedStatus(); });
+    setInterval(function () { pipedRefresh(false, function () { renderPipedStatus(); }); }, PIPED_TTL);
     setTimeout(checkVersion, 4000);
     setInterval(checkVersion, 60000);
 
