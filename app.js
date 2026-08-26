@@ -248,9 +248,20 @@
   }
 
   /* l'engine migliore per anteprime/stream diretti: quello che ha appena
-     funzionato, altrimenti quello incollato, altrimenti il NAS scoperto */
+     funzionato, altrimenti quello incollato, altrimenti il NAS scoperto.
+     Un URL "ultimo-funzionante" salvato in localStorage puo' essere un
+     tunnel di un riavvio precedente (morto): se sappiamo qual è l'URL
+     attuale del NAS e non coincide, lo si ignora (stessa regola del
+     custom in engines()). */
+  function staleTunnel(u) {
+    return !!(nasUrl && u && u.indexOf('trycloudflare.com') !== -1 && u !== nasUrl);
+  }
   function bestEngine() {
-    return storageGet(LAST_GOOD_KEY) || engineUrl() || nasUrl || '';
+    var good = storageGet(LAST_GOOD_KEY);
+    if (staleTunnel(good)) good = '';
+    var custom = engineUrl();
+    if (staleTunnel(custom)) custom = '';
+    return good || custom || nasUrl || '';
   }
 
   /* elenco ordinato di engine da provare: custom > NAS (auto) > Cloudflare */
@@ -318,8 +329,11 @@
     }
     if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
     /* l'ultimo engine che ha funzionato va provato per primo: converge
-       sull'engine sano e non spreca tentativi su quello giù */
+       sull'engine sano e non spreca tentativi su quello giù. Se è un
+       tunnel morto di un riavvio precedente, ignoralo (lo scopriamo
+       dall'URL attuale del NAS). */
     var good = storageGet(LAST_GOOD_KEY);
+    if (staleTunnel(good)) good = '';
     if (good) {
       for (var i = 1; i < list.length; i++) {
         if (list[i] === good) {
