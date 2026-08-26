@@ -62,6 +62,7 @@
       'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
       'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
+      'youtube-refused-status': 'YouTube ha rifiutato la richiesta (HTTP {0}, blocco temporaneo). Riprova tra poco.',
       'interrupted': 'Download interrotto (rete o annullamento). Riprova.',
       'retry-wait': "YouTube ha bloccato l'engine: riprovo da solo tra {0}s…",
       'zip-select': 'Seleziona per lo zip',
@@ -125,6 +126,7 @@
       'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
       'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
+      'youtube-refused-status': 'YouTube refused the request (HTTP {0}, temporary block). Try again soon.',
       'interrupted': 'Download interrupted (network or cancelled). Try again.',
       'retry-wait': 'YouTube blocked the engine: retrying automatically in {0}s…',
       'zip-select': 'Select for zip',
@@ -276,7 +278,13 @@
   function engines() {
     var list = [];
     var custom = storageGet(ENGINE_KEY);
-    if (custom) list.push(custom);
+    if (custom) {
+      // un custom trycloudflare vecchio (tunnel morto) è peggio di niente:
+      // lo si prova solo se è lo stesso URL che il NAS sta registrando ora
+      if (custom.indexOf('trycloudflare.com') === -1 || (nasUrl && custom === nasUrl)) {
+        list.push(custom);
+      }
+    }
     if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
     if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
     return list;
@@ -291,15 +299,24 @@
     return m ? parseInt(m[1], 10) : 0;
   }
 
+  /* nome breve dell'engine per i messaggi di errore (NAS/worker/custom) */
+  function engineLabel(u) {
+    if (!u) return '?';
+    if (u.indexOf('trycloudflare.com') !== -1) return 'NAS';
+    if (u.indexOf('workers.dev') !== -1) return 'worker';
+    return u.replace(/^https?:\/\//, '').split('/')[0].split('.')[0] || 'engine';
+  }
+
   /* chiama un endpoint JSON con fallback su piu' engine */
   function callEngine(pathQuery, ok, err, maxAttempts, onRetry) {
     var list = engines();
     var idx = 0;
     var lastErr = null;
+    var lastEngine = '';
     var autoLeft = MAX_AUTO_RETRY;
     (function next() {
       if (idx >= list.length) {
-        err(lastErr ? friendlyMsg(lastErr) : 'all engines failed');
+        err(lastErr ? friendlyMsg(lastErr) + ' (' + engineLabel(lastEngine) + ')' : 'all engines failed');
         return;
       }
       var engine = list[idx++];
@@ -312,12 +329,14 @@
             autoLeft--;
             idx = 0;
             lastErr = null;
+            lastEngine = '';
             if (onRetry) onRetry(rs);
             setTimeout(next, rs * 1000);
             return;
           }
           lastErr = msg;
-          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
+          lastEngine = engine;
+          if (shouldRetry(msg)) next(); else err(friendlyMsg(msg) + ' (' + engineLabel(engine) + ')');
         },
         maxAttempts || 3, 1500);
     })();
@@ -383,6 +402,7 @@
     if (s === 'interrotto') return t('interrupted');
     if (retrySeconds(s)) return t('bot-blocked');
     if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) return t('bot-blocked');
+    if (/youtube http 403|youtube http 429|errore 403|errore 429/.test(s)) return tF('youtube-refused-status', '403/429');
     if (/403|429|400/.test(s)) return t('youtube-refused');
     return s;
   }
