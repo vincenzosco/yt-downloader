@@ -62,7 +62,16 @@
       'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
       'interrupted': 'Download interrotto (rete o annullamento). Riprova.',
-      'retry-wait': "YouTube ha bloccato l'engine: riprovo da solo tra {0}s…"
+      'retry-wait': "YouTube ha bloccato l'engine: riprovo da solo tra {0}s…",
+      'zip-select': 'Seleziona per lo zip',
+      'sel-count': '{0} selezionate',
+      'zip-download': 'Scarica .zip',
+      'zip-clear': 'Svuota',
+      'zip-progress': '{0}/{1} · {2}',
+      'zip-done': 'Zip salvato ({0} file)',
+      'zip-err': 'zip: {0}',
+      'zip-unavailable': 'stream non disponibile',
+      'zip-some-failed': ' ({0} non riuscite)'
     },
     en: {
       'title': 'ytd. — YouTube downloader',
@@ -113,7 +122,16 @@
       'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
       'interrupted': 'Download interrupted (network or cancelled). Try again.',
-      'retry-wait': 'YouTube blocked the engine: retrying automatically in {0}s…'
+      'retry-wait': 'YouTube blocked the engine: retrying automatically in {0}s…',
+      'zip-select': 'Select for zip',
+      'sel-count': '{0} selected',
+      'zip-download': 'Download .zip',
+      'zip-clear': 'Clear',
+      'zip-progress': '{0}/{1} · {2}',
+      'zip-done': 'Zip saved ({0} files)',
+      'zip-err': 'zip: {0}',
+      'zip-unavailable': 'stream unavailable',
+      'zip-some-failed': ' ({0} failed)'
     }
   };
 
@@ -149,6 +167,7 @@
     var btn = $('lang-toggle');
     if (btn) btn.textContent = currentLang === 'it' ? 'EN' : 'IT';
     renderEngineUrl();
+    if (typeof renderSel === 'function') renderSel();
   }
 
   function bindLang() {
@@ -405,6 +424,17 @@
     var li = document.createElement('li');
     li.className = 'row';
 
+    /* selezione multipla per lo zip */
+    var check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'sel-check';
+    check.setAttribute('data-id', item.id);
+    check.setAttribute('aria-label', t('zip-select'));
+    check.addEventListener('change', function () {
+      if (check.checked) selAdd(item); else selRemove(item.id);
+    });
+    li.appendChild(check);
+
     var img = document.createElement('img');
     img.className = 'thumb';
     img.src = thumbFor(item.id);
@@ -448,6 +478,10 @@
 
     bindPlay(playBtn, li, item);
     bindDownload(li, dlBtn, item, t('download'), statusId);
+
+    /* sincronizza lo stato della checkbox con la selezione corrente */
+    check.checked = !!selMap[item.id];
+    if (selMap[item.id]) addClass(li, 'is-sel');
 
     return li;
   }
@@ -645,6 +679,249 @@
       document.body.removeChild(a);
       U.revokeObjectURL(url);
     }, 1500);
+  }
+
+  /* ---------- selezione multipla + zip ---------- */
+
+  // Selezioni persistenti tra le ricerche: l'utente spunta le canzoni e le
+  // scarica tutte in un unico .zip (costruito nel browser, metodo "store":
+  // gli audio sono gia' compressi, non serve comprimere il contenitore).
+  var selOrder = [];
+  var selMap = {};
+
+  function selAdd(item) {
+    if (selMap[item.id]) return;
+    selMap[item.id] = { id: item.id, title: item.title || '', author: item.author || '' };
+    selOrder.push(item.id);
+    renderSel();
+  }
+  function selRemove(id) {
+    if (!selMap[id]) return;
+    delete selMap[id];
+    var i = selOrder.indexOf(id);
+    if (i > -1) selOrder.splice(i, 1);
+    renderSel();
+  }
+  function selClear() {
+    selOrder = [];
+    selMap = {};
+    renderSel();
+  }
+
+  function renderSel() {
+    var tray = $('sel-tray');
+    var count = $('sel-count');
+    var zipBtn = $('sel-zip');
+    var zipBtnBusy = zipBtn && zipBtn.getAttribute('data-busy') === '1';
+    if (!tray) return;
+    tray.hidden = (selOrder.length === 0 && !zipBtnBusy);
+    if (count) count.textContent = tF('sel-count', selOrder.length);
+    // sincronizza le checkbox esistenti
+    var boxes = document.querySelectorAll('.sel-check');
+    for (var i = 0; i < boxes.length; i++) {
+      var id = boxes[i].getAttribute('data-id');
+      boxes[i].checked = !!selMap[id];
+      var row = boxes[i].parentNode;
+      if (selMap[id]) addClass(row, 'is-sel'); else removeClass(row, 'is-sel');
+    }
+  }
+
+  function setSelStatus(msg, isError) {
+    var el = $('sel-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    if (isError) addClass(el, 'is-error'); else removeClass(el, 'is-error');
+  }
+
+  /* ---------- zip (puro ES5, niente librerie) ---------- */
+
+  var CRC_TABLE = null;
+  function crcTable() {
+    if (CRC_TABLE) return CRC_TABLE;
+    CRC_TABLE = [];
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      CRC_TABLE[n] = c >>> 0;
+    }
+    return CRC_TABLE;
+  }
+  function crc32(bytes) {
+    var t = crcTable();
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function utf8Bytes(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+      else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length &&
+               str.charCodeAt(i + 1) >= 0xDC00 && str.charCodeAt(i + 1) <= 0xDFFF) {
+        var cp = 0x10000 + ((c - 0xD800) << 10) + (str.charCodeAt(i + 1) - 0xDC00);
+        out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+        i++;
+      } else if (c >= 0xD800 && c <= 0xDFFF) out.push(0xEF, 0xBF, 0xBD);
+      else out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return new Uint8Array(out);
+  }
+
+  function arrBlob(view) {
+    try { return new Blob([view]); }
+    catch (e) { return new Blob([view.buffer]); }
+  }
+
+  function zipU16(arr, off, v) { arr[off] = v & 255; arr[off + 1] = (v >>> 8) & 255; }
+  function zipU32(arr, off, v) {
+    arr[off] = v & 255; arr[off + 1] = (v >>> 8) & 255;
+    arr[off + 2] = (v >>> 16) & 255; arr[off + 3] = (v >>> 24) & 255;
+  }
+
+  // Costruisce uno zip "store" (senza compressione): header locale + dati +
+  // directory centrale + end-of-central-directory, come da specifica PKZIP.
+  function ZipBuilder() {
+    this.parts = [];
+    this.central = [];
+    this.offset = 0;
+    this.count = 0;
+  }
+  ZipBuilder.prototype.add = function (name, bytes) {
+    var nameB = utf8Bytes(String(name));
+    var crc = crc32(bytes);
+    var now = new Date();
+    var time = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF;
+    var date = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF;
+    var size = bytes.length;
+
+    var lh = new Uint8Array(30 + nameB.length);
+    zipU32(lh, 0, 0x04034B50);
+    zipU16(lh, 4, 20);        // version needed (2.0)
+    zipU16(lh, 6, 0x0800);    // flags: nomi UTF-8
+    zipU16(lh, 8, 0);         // metodo: store
+    zipU16(lh, 10, time);
+    zipU16(lh, 12, date);
+    zipU32(lh, 14, crc);
+    zipU32(lh, 18, size);
+    zipU32(lh, 22, size);
+    zipU16(lh, 26, nameB.length);
+    zipU16(lh, 28, 0);        // extra len
+    lh.set(nameB, 30);
+
+    this.parts.push(arrBlob(lh));
+    this.parts.push(bytes instanceof Blob ? bytes : arrBlob(bytes));
+
+    var ch = new Uint8Array(46 + nameB.length);
+    zipU32(ch, 0, 0x02014B50);
+    zipU16(ch, 4, 20);        // version made by
+    zipU16(ch, 6, 20);        // version needed
+    zipU16(ch, 8, 0x0800);
+    zipU16(ch, 10, 0);
+    zipU16(ch, 12, time);
+    zipU16(ch, 14, date);
+    zipU32(ch, 16, crc);
+    zipU32(ch, 20, size);
+    zipU32(ch, 24, size);
+    zipU16(ch, 28, nameB.length);
+    zipU16(ch, 30, 0);        // extra
+    zipU16(ch, 32, 0);        // comment
+    zipU16(ch, 34, 0);        // disk start
+    zipU16(ch, 36, 0);        // internal attrs
+    zipU32(ch, 38, 0);        // external attrs
+    zipU32(ch, 42, this.offset);
+    ch.set(nameB, 46);
+    this.central.push(ch);
+
+    this.offset += 30 + nameB.length + size;
+    this.count++;
+  };
+  ZipBuilder.prototype.build = function () {
+    var cdSize = 0;
+    for (var i = 0; i < this.central.length; i++) cdSize += this.central[i].length;
+    var eocd = new Uint8Array(22);
+    zipU32(eocd, 0, 0x06054B50);
+    zipU16(eocd, 4, 0);       // disk
+    zipU16(eocd, 6, 0);       // cd start disk
+    zipU16(eocd, 8, this.count);
+    zipU16(eocd, 10, this.count);
+    zipU32(eocd, 12, cdSize);
+    zipU32(eocd, 16, this.offset);
+    zipU16(eocd, 20, 0);      // comment len
+    var parts = this.parts.slice();
+    for (var j = 0; j < this.central.length; j++) parts.push(this.central[j]);
+    parts.push(eocd);
+    return new Blob(parts, { type: 'application/zip' });
+  };
+
+  function blobBytes(blob, cb) {
+    if (typeof FileReader === 'undefined' || !blob) { cb(null); return; }
+    var r = new FileReader();
+    r.onload = function () { cb(new Uint8Array(r.result)); };
+    r.onerror = function () { cb(null); };
+    r.readAsArrayBuffer(blob);
+  }
+
+  /* scarica una canzone come bytes per lo zip: stream senza itag (il worker
+     sceglie il miglior audio), estensione dal Content-Type del blob. */
+  function fetchZipItem(item, ok, err) {
+    callEngineStream(
+      '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(item.title || item.id),
+      function (blob) {
+        blobBytes(blob, function (bytes) {
+          if (!bytes || !bytes.length) { err(t('zip-unavailable')); return; }
+          var mime = blob.type || 'audio/mp4';
+          ok(sanitizeTitle(item.title || item.id) + '.' + extForMime(mime), bytes);
+        });
+      },
+      function (msg) { err(friendlyMsg(msg)); },
+      null, 3, null);
+  }
+
+  function downloadZip(zipBtn) {
+    if (zipBtn.getAttribute('data-busy') === '1') return;
+    if (!selOrder.length) return;
+    zipBtn.setAttribute('data-busy', '1');
+    addClass(zipBtn, 'is-busy');
+    zipBtn.textContent = '0/' + selOrder.length;
+    var items = selOrder.map(function (id) { return selMap[id]; });
+    var failures = 0;
+    var zip = new ZipBuilder();
+    var i = 0;
+    (function next() {
+      if (i >= items.length) {
+        var done = items.length - failures;
+        if (done) {
+          var zipName = 'ytd-' + new Date().toISOString().slice(0, 10) + '.zip';
+          saveBlob(zip.build(), zipName, null);
+          setSelStatus(tF('zip-done', done) + (failures ? tF('zip-some-failed', failures) : ''));
+        } else {
+          setSelStatus(tF('zip-err', t('zip-unavailable')), true);
+        }
+        zipBtn.removeAttribute('data-busy');
+        removeClass(zipBtn, 'is-busy');
+        zipBtn.textContent = t('zip-download');
+        renderSel();
+        setTimeout(function () { setSelStatus(''); }, 6000);
+        return;
+      }
+      var item = items[i];
+      zipBtn.textContent = (i + 1) + '/' + items.length;
+      setSelStatus(tF('zip-progress', i + 1, items.length, item.title));
+      fetchZipItem(item,
+        function (name, bytes) { zip.add(name, bytes); i++; next(); },
+        function () { failures++; i++; next(); });
+    })();
+  }
+
+  function bindSelTray() {
+    var zipBtn = $('sel-zip');
+    var clearBtn = $('sel-clear');
+    if (zipBtn) zipBtn.addEventListener('click', function () { downloadZip(zipBtn); });
+    if (clearBtn) clearBtn.addEventListener('click', selClear);
+    renderSel();
   }
 
   /* ---------- ricerca ---------- */
@@ -919,6 +1196,7 @@
     bindTabs();
     renderEngineUrl();
     bindEngineChange();
+    bindSelTray();
 
     $('search-form').addEventListener('submit', function (ev) {
       ev.preventDefault();

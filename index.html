@@ -51,6 +51,15 @@
 
 </main>
 
+<div class="sel-tray" id="sel-tray" hidden aria-live="polite">
+  <div class="wrap sel-inner">
+    <span class="sel-count" id="sel-count"></span>
+    <button type="button" class="btn btn-primary" id="sel-zip" data-i18n="zip-download">Download .zip</button>
+    <button type="button" class="btn" id="sel-clear" data-i18n="zip-clear">Clear</button>
+    <span class="sel-status" id="sel-status"></span>
+  </div>
+</div>
+
 <footer class="site-footer">
   <div class="wrap">
     <p class="foot-line"><span data-i18n="engine-label">engine:</span> <span class="mono" id="engine-url">not configured</span>
