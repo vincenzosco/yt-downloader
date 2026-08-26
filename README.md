@@ -119,6 +119,15 @@ cd worker && node proxy-test.mjs
   con single-flight (le richieste concorrenti per lo stesso video aspettano
   una sola chiamata a YouTube) e **serializza** tutte le chiamate a YouTube
   (mai più di una alla volta: le raffiche fanno scattare il flag).
+- **Strategia client (allineata a yt-dlp, lug 2026)**: versioni client
+  aggiornate (`ANDROID 21.26.364`, `IOS 21.26.4`, `WEB 2.20260708`). Prima
+  si provano android/ios con PO token + `visitorData` fresco (formati
+  completi, audio-only inclusi); se falliscono o YouTube toglie gli url dai
+  formati (nuova enforcement, token generici non più legati al video),
+  l'ultima risorsa è `web_embedded` (`WEB_EMBEDDED_PLAYER` con
+  `thirdParty.embedUrl`), che **non richiede alcun PO token** e garantisce
+  almeno il 360p progressivo (itag 18) scaricabile. `android_vr` è evitato:
+  YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
 - **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
   il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
   a ogni blocco) risponde subito `{ retryAfter }`; il frontend mostra un
@@ -271,6 +280,15 @@ cd worker && node proxy-test.mjs
   lists do not route YouTube traffic: they stay available as infrastructure
   for a possible external engine. Also, free proxies are almost all
   datacenter IPs — the very category YouTube flags.
+- **Client strategy (aligned with yt-dlp, Jul 2026)**: up-to-date client
+  versions (`ANDROID 21.26.364`, `IOS 21.26.4`, `WEB 2.20260708`). First it
+  tries android/ios with PO token + fresh `visitorData` (full formats,
+  audio-only included); if they fail or YouTube strips the urls from the
+  formats (new enforcement — generic tokens are no longer video-bound), the
+  last resort is `web_embedded` (`WEB_EMBEDDED_PLAYER` with
+  `thirdParty.embedUrl`), which needs **no PO token at all** and guarantees
+  a downloadable 360p progressive (itag 18). `android_vr` is avoided:
+  YouTube broke it on 2026-08-17 (403 on all formats).
 - **Real limit**: heavy continued use still triggers blocks on the worker IP
   (PO token is not 100%). It resets on its own in minutes/hours. Normal use
   (a few songs) is fine. For heavy use you'd need an extra provider or a

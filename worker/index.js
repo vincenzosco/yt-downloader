@@ -102,18 +102,39 @@ const YT_HOSTS = [
   'https://youtubei.googleapis.com/youtubei/v1',
 ];
 
+// Versioni client allineate a yt-dlp (luglio 2026): versioni vecchie vengono
+// penalizzate da YouTube. web_embedded NON richiede PO token (vedi sotto).
 const UA_WEB =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const UA_ANDROID = 'com.google.android.youtube/20.14.37 (Linux; U; Android 11) gzip';
-const UA_IOS = 'com.google.ios.youtube/20.14.4 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X)';
+const UA_ANDROID = 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip';
+const UA_IOS = 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)';
 
-export const CLIENT_WEB = { clientName: 'WEB', clientVersion: '2.20250605.01.00' };
+export const CLIENT_WEB = { clientName: 'WEB', clientVersion: '2.20260708.00.00' };
+// web_embedded: per la guida PO token di yt-dlp questo client NON richiede
+// alcun PO token (né per il player né per gli stream GVS). Limite: funziona
+// solo per i video embeddabili (la stragrande maggioranza); per gli altri
+// playabilityStatus risponde ERROR e si ripiega sugli altri client. Il
+// context richiede thirdParty.embedUrl (qualsiasi URL non-YouTube va bene).
+export const CLIENT_EMBEDDED = {
+  clientName: 'WEB_EMBEDDED_PLAYER',
+  clientVersion: '2.20260708.00.00',
+  thirdParty: { embedUrl: 'https://www.reddit.com/' },
+};
 export const CLIENT_ANDROID = {
   clientName: 'ANDROID',
-  clientVersion: '20.14.37',
+  clientVersion: '21.26.364',
   androidSdkVersion: 30,
+  osName: 'Android',
+  osVersion: '11',
 };
-export const CLIENT_IOS = { clientName: 'IOS', clientVersion: '20.14.4', deviceModel: 'iPhone16,2' };
+export const CLIENT_IOS = {
+  clientName: 'IOS',
+  clientVersion: '21.26.4',
+  deviceMake: 'Apple',
+  deviceModel: 'iPhone16,2',
+  osName: 'iPhone',
+  osVersion: '18.3.2.22D82',
+};
 
 export async function innertube(path, clients, body) {
   // serial: mai piu' di una chiamata YouTube alla volta (raffiche = flag)
@@ -121,13 +142,18 @@ export async function innertube(path, clients, body) {
     let lastErr = null;
     for (let h = 0; h < YT_HOSTS.length; h++) {
       for (let c = 0; c < clients.length; c++) {
-        const client = clients[c];
+        const raw = clients[c];
         try {
-          const ua = client === CLIENT_ANDROID ? UA_ANDROID : client === CLIENT_IOS ? UA_IOS : UA_WEB;
+          const client = { ...raw };
+          const thirdParty = client.thirdParty;
+          delete client.thirdParty;
+          const ua = client.clientName === 'ANDROID' ? UA_ANDROID : client.clientName === 'IOS' ? UA_IOS : UA_WEB;
+          const context = { client };
+          if (thirdParty) context.thirdParty = thirdParty;
           const res = await fetch(YT_HOSTS[h] + path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
-            body: JSON.stringify({ context: { client }, ...body }),
+            body: JSON.stringify({ context, ...body }),
           });
           if (res.status !== 200) {
             lastErr = new Error('youtube http ' + res.status);
@@ -376,6 +402,10 @@ async function doSearch(query) {
 
 /* ---------- audio ---------- */
 
+// android/ios danno i formati completi (audio-only inclusi) ma richiedono il
+// PO token; web_embedded non richiede alcun token ma restituisce solo 360p
+// progressive, quindi va provato come ULTIMA risorsa (stessa strategia di
+// yt-dlp), non come primo client.
 const CLIENTS_PLAYER = [CLIENT_ANDROID, CLIENT_IOS];
 
 // visitorData fresco dalle pagine HTML (non challenge): aiuta a superare
@@ -410,13 +440,17 @@ async function withClients(fn, pot) {
   const results = [];
   for (let round = 0; round < 3; round++) {
     const vd = await getVisitorData(round > 0);
-    let clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
     let roundPot = pot;
     // Al giro 1+ con pot attivo, usa un token rigenerato (il vecchio è stato bloccato)
     if (round > 0 && pot) {
       try { roundPot = await refreshPoToken(); } catch (e) { /* resta quello vecchio */ }
     }
-    if (roundPot) clients = clients.map((c) => ({ ...c, poToken: roundPot }));
+    const clients = CLIENTS_PLAYER.map((c) => {
+      const cl = { ...c };
+      if (vd) cl.visitorData = vd;
+      if (roundPot) cl.poToken = roundPot;
+      return cl;
+    });
     for (let c = 0; c < clients.length; c++) {
       try {
         const value = await fn(clients[c]);
@@ -429,6 +463,17 @@ async function withClients(fn, pot) {
     // pausa tra i giri: meno pressione sull'IP, piu' probabilita' che il
     // giro successivo (token rigenerato + visitorData fresco) passi
     if (round < 2) await sleep(1500 * (round + 1));
+  }
+  // Ultima risorsa: web_embedded — nessun PO token, ma solo 360p progressive.
+  // Meglio un download 360p che un errore "bloccato" quando l'IP e' in
+  // cooldown e i client con token falliscono.
+  if (!results.length) {
+    try {
+      const value = await fn({ ...CLIENT_EMBEDDED });
+      if (value) results.push(value);
+    } catch (e) {
+      lastErr = e;
+    }
   }
   if (!results.length) {
     if (isBotErr(lastErr)) markBlocked(); // IP flaggato: backoff, niente hammering
@@ -450,7 +495,11 @@ async function getAudioInfo(id, pot) {
 async function getFormats(id, pot) {
   const parsed = await withClients(async (client) => {
     const data = await innertube('/player', [client], { videoId: id });
-    return parsePlayerFormats(data);
+    const p = parsePlayerFormats(data);
+    // La nuova enforcement di YouTube a volte restituisce i formati SENZA url
+    // (il PO token generico non e' legato al video): senza url utili la
+    // risposta non serve -> trattala come fallimento e prova il client dopo.
+    return p.formats.length ? p : null;
   }, pot);
   // unisce i formati di tutti i client (dedup per itag, preferisce chi ha size)
   const byItag = {};
