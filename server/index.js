@@ -103,6 +103,78 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // proxy CORS per la modalità browser (yt-dlp.wasm): YouTube non manda
+    // gli header CORS, quindi il browser non può chiamare youtubei/v1
+    // direttamente. Questo endpoint inoltra le richieste metadata di
+    // yt-dlp (che gira nel browser via Pyodide) e aggiunge CORS permissivi
+    // alla risposta. Solo metadata (~10-50KB): i byte audio/video vanno
+    // diretti browser→googlevideo (quando il CDN manda CORS) o tramite
+    // lo stesso proxy per i formati che non lo permettono.
+    if (url.pathname === '/proxy') {
+      const cors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Expose-Headers': '*',
+      };
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, cors);
+        res.end();
+        return;
+      }
+      const target = url.searchParams.get('url');
+      if (!target || !/^https?:\/\//i.test(target)) {
+        res.writeHead(400, { ...cors, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'bad url', message: 'parametro url mancante o non http(s)' }));
+        return;
+      }
+      const STRIP_REQ = new Set([
+        'host', 'connection', 'content-length', 'origin', 'referer',
+        'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site',
+        'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+        'accept-encoding',
+      ]);
+      const upstreamHeaders = {};
+      for (const [k, v] of Object.entries(req.headers)) {
+        const lower = k.toLowerCase();
+        if (lower.startsWith('x-ytdlp-')) {
+          upstreamHeaders[lower.slice(8)] = v;
+        } else if (!STRIP_REQ.has(lower) && !lower.startsWith('sec-') && !lower.startsWith('x-')) {
+          upstreamHeaders[lower] = v;
+        }
+      }
+      if (!upstreamHeaders['user-agent']) {
+        upstreamHeaders['user-agent'] =
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+      }
+      try {
+        const upstream = await fetch(target, {
+          method: req.method,
+          headers: upstreamHeaders,
+          body: body && body.length ? new Uint8Array(body) : undefined,
+          redirect: 'follow',
+          signal: AbortSignal.timeout(45000),
+        });
+        const outHeaders = { ...cors };
+        const STRIP_RES = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'content-encoding', 'content-length']);
+        for (const [k, v] of upstream.headers.entries()) {
+          if (!STRIP_RES.has(k.toLowerCase())) outHeaders[k] = v;
+        }
+        res.writeHead(upstream.status, outHeaders);
+        if (upstream.body) {
+          for await (const chunk of upstream.body) res.write(chunk);
+        }
+        res.end();
+      } catch (e) {
+        console.error('[server] proxy errore:', e && e.message ? e.message : e);
+        if (!res.headersSent) {
+          res.writeHead(502, { ...cors, 'Content-Type': 'text/plain' });
+        }
+        res.end('upstream fetch failed: ' + (e && e.message ? e.message : 'errore'));
+      }
+      return;
+    }
+
     const request = new Request(url, {
       method: req.method,
       headers,

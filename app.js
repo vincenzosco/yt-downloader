@@ -27,6 +27,13 @@
       'btn-search': 'Cerca',
       'placeholder-link': 'https://www.youtube.com/watch?v=… o playlist…',
       'btn-preview': 'Anteprima',
+      'bm-btn': 'Estrai nel browser (yt-dlp)',
+      'bm-start': 'Avvio runtime nel browser (prima volta ~30MB, poi in cache)…',
+      'bm-proxy-nas': 'Uso il NAS come proxy metadata.',
+      'bm-proxy-missing': 'Nessun proxy metadata: incolla l\u2019URL del NAS nel footer (\u201ccambia\u201d).',
+      'bm-extract-err': 'estrazione nel browser: {0}',
+      'bm-unsupported': 'Il tuo browser non supporta la modalità browser (serve WebAssembly, browser ~2023+).',
+      'bm-ok': 'Metadata estratti nel browser (yt-dlp).',
       'noscript': 'Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).',
       'engine-label': 'engine:',
       'engine-change': 'cambia',
@@ -91,6 +98,13 @@
       'btn-search': 'Search',
       'placeholder-link': 'https://www.youtube.com/watch?v=… or playlist…',
       'btn-preview': 'Preview',
+      'bm-btn': 'Extract in browser (yt-dlp)',
+      'bm-start': 'Starting in-browser runtime (first time ~30MB, then cached)…',
+      'bm-proxy-nas': 'Using the NAS as metadata proxy.',
+      'bm-proxy-missing': 'No metadata proxy: paste the NAS URL in the footer (\u201cchange\u201d).',
+      'bm-extract-err': 'browser extraction: {0}',
+      'bm-unsupported': 'Your browser does not support browser mode (needs WebAssembly, ~2023+ browser).',
+      'bm-ok': 'Metadata extracted in the browser (yt-dlp).',
       'noscript': 'This page requires JavaScript (ES5, works in any browser from ~2015).',
       'engine-label': 'engine:',
       'engine-change': 'change',
@@ -1461,6 +1475,210 @@
   window.__ytdAutoUpdate = { checkVersion: checkVersion, busy: anyDownloadBusy, version: YTD_VER };
   window.__ytdNas = { engines: engines, get: function () { return nasUrl; } };
 
+  /* ---------- modalità browser (yt-dlp.wasm) ----------
+     Quando l'engine NAS è bloccato da YouTube, si può estrarre i metadata
+     direttamente nel browser: yt-dlp gira in WebAssembly (Pyodide) e parla
+     con YouTube attraverso il proxy CORS del NAS (server/index.js /proxy),
+     che YouTube tratta come un client diverso dal nostro engine. I byte
+     audio/video poi scendono diretti dal CDN (o via lo stesso proxy se il
+     CDN non manda CORS). Solo per browser moderni (~2023+). */
+
+  var BM_SUPPORTED = (typeof WebAssembly !== 'undefined' &&
+    typeof Worker === 'function' && typeof fetch === 'function' &&
+    typeof Promise === 'function');
+  var bmWorker = null;
+  var bmBusy = false;
+  var bmSeq = 0;
+  var bmCbs = {};
+
+  function bmShowSupported() {
+    var btn = $('bm-btn');
+    if (btn) btn.hidden = !BM_SUPPORTED;
+  }
+
+  function bmEnsure(errCb) {
+    if (bmWorker) return true;
+    try {
+      bmWorker = new Worker('browser/worker.js');
+    } catch (e) { errCb(String(e)); return false; }
+    bmWorker.onmessage = function (ev) {
+      var m = ev.data || {};
+      if (m.type === 'result') {
+        var h = bmCbs[m.id];
+        if (h) { delete bmCbs[m.id]; h.cb(m.payload); }
+      } else if (m.type === 'error') {
+        var h2 = bmCbs[m.id];
+        if (h2) { delete bmCbs[m.id]; h2.err(m.payload); }
+      } else if (m.type === 'log') {
+        /* log di Pyodide/yt-dlp: mostrali nello status per diagnosi */
+        var st = $('link-status');
+        if (st) {
+          st.textContent = String(m.payload || '');
+          st.hidden = false;
+          removeClass(st, 'is-error');
+        }
+      }
+    };
+    /* proxy metadata = NAS (bestEngine): fire-and-forget, avvia il boot */
+    bmWorker.postMessage({ id: 0, method: 'configure', args: { metadataProxy: bestEngine() || '' } });
+    return true;
+  }
+
+  function bmCall(method, args, cb, errCb) {
+    var id = ++bmSeq;
+    bmCbs[id] = { cb: cb, err: errCb };
+    bmWorker.postMessage({ id: id, method: method, args: args || {} });
+  }
+
+  function bmExtract(url, cb, errCb) {
+    if (!bmEnsure(errCb)) return;
+    bmCall('extract', { url: url }, cb, errCb);
+  }
+
+  /* scarica i byte: prima fetch diretto (il CDN googlevideo manda CORS per
+     gli URL estratti da yt-dlp), se il browser lo blocca ripiega sul proxy
+     CORS del NAS (/proxy?url=...) che streama i byte con CORS permissivi. */
+  function bmFetchBytes(url, onProgress, ok, err) {
+    var done = false;
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.responseType = 'blob';
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4 || done) return;
+      if (x.status >= 200 && x.status < 300) { done = true; ok(x.response); }
+      else { done = true; bmFetchProxy(url, onProgress, ok, err); }
+    };
+    x.onerror = function () { if (!done) { done = true; bmFetchProxy(url, onProgress, ok, err); } };
+    x.send();
+  }
+
+  function bmFetchProxy(url, onProgress, ok, err) {
+    var proxy = bestEngine();
+    if (!proxy) { err(t('bm-proxy-missing')); return; }
+    var x = new XMLHttpRequest();
+    x.open('GET', proxy + '/proxy?url=' + encodeURIComponent(url), true);
+    x.responseType = 'blob';
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (x.status >= 200 && x.status < 300) ok(x.response);
+      else err('errore ' + x.status);
+    };
+    x.onerror = function () { err('network error'); };
+    x.onprogress = function (e) { if (e.lengthComputable) onProgress(e.loaded, e.total); };
+    x.send();
+  }
+
+  function bmFormats(info) {
+    var formats = info.formats || [];
+    var audio = [], progressive = [], video = [];
+    for (var i = 0; i < formats.length; i++) {
+      var f = formats[i];
+      if (!f.url) continue;
+      var v = f.vcodec && f.vcodec !== 'none';
+      var a = f.acodec && f.acodec !== 'none';
+      if (v && a) progressive.push(f);
+      else if (a && !v) audio.push(f);
+      else if (v && !a) video.push(f);
+    }
+    audio.sort(function (x, y) { return (y.tbr || 0) - (x.tbr || 0); });
+    progressive.sort(function (x, y) { return (y.height || 0) - (x.height || 0); });
+    video.sort(function (x, y) { return (y.height || 0) - (x.height || 0); });
+    return { audio: audio, progressive: progressive, video: video };
+  }
+
+  function bmShowCard(info) {
+    var box = $('link-preview');
+    box.innerHTML = '';
+    var vid = info.id || '';
+    var card = buildCard(info.thumbnail || thumbFor(vid), info.title || '', '', '');
+    box.appendChild(card);
+
+    var sel = document.createElement('select');
+    sel.className = 'picker-select';
+    sel.setAttribute('aria-label', t('quality'));
+    var groups = bmFormats(info);
+    function addGroup(label, list) {
+      if (!list.length) return;
+      var g = document.createElement('optgroup');
+      g.label = label;
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        var o = document.createElement('option');
+        o.value = String(i);
+        o.setAttribute('data-fmt', JSON.stringify({ url: f.url, ext: f.ext || 'm4a', mime: f.mime_type || '' }));
+        var bits = [];
+        if (f.height) bits.push(f.height + 'p');
+        if (f.tbr) bits.push(Math.round(f.tbr) + ' kbps');
+        if (f.filesize) bits.push(fmtBytes(f.filesize));
+        if (f.format_note) bits.push(f.format_note);
+        o.textContent = bits.length ? bits.join(' · ') : (f.format_id || '?');
+        g.appendChild(o);
+      }
+      sel.appendChild(g);
+    }
+    addGroup(t('group-audio'), groups.audio);
+    addGroup(t('group-video-mixed'), groups.progressive);
+    addGroup(t('group-video-only'), groups.video);
+
+    var body = card.querySelector('.card-body');
+    var wrap = document.createElement('div');
+    wrap.className = 'picker';
+    wrap.appendChild(sel);
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-dl';
+    go.textContent = t('download');
+    wrap.appendChild(go);
+    body.appendChild(wrap);
+
+    go.addEventListener('click', function () {
+      var opt = sel.options[sel.selectedIndex];
+      var raw = opt ? opt.getAttribute('data-fmt') : null;
+      if (!raw) return;
+      var fmt = null;
+      try { fmt = JSON.parse(raw); } catch (e) { /* ignora */ }
+      if (!fmt || !fmt.url) return;
+      var name = sanitizeTitle(info.title || info.id) + '.' + (fmt.ext || 'm4a');
+      var bar = attachProgress(wrap);
+      setStatus('link-status', '', false);
+      bmFetchBytes(fmt.url,
+        function (loaded, total) { if (total) setBar(bar.el, loaded / total); },
+        function (blob) {
+          saveBlob(blob, name, 'link-status');
+          setStatus('link-status', t('saved'), false);
+          bar.done();
+        },
+        function (msg) { setStatus('link-status', tF('download-err', friendlyMsg(msg)), true); bar.done(); });
+    });
+    setStatus('link-status', t('bm-ok'), false);
+  }
+
+  function bindBm() {
+    var btn = $('bm-btn');
+    if (!btn) return;
+    bmShowSupported();
+    btn.addEventListener('click', function () {
+      if (bmBusy) return;
+      var raw = $('link-input').value;
+      var parsed = parseYtUrl(raw);
+      if (!parsed || !parsed.vid) { setStatus('link-status', t('link-unrecognized'), true); return; }
+      if (!BM_SUPPORTED) { setStatus('link-status', t('bm-unsupported'), true); return; }
+      if (!bestEngine()) { setStatus('link-status', t('bm-proxy-missing'), true); return; }
+      bmBusy = true;
+      setStatus('link-status', t('bm-start'), false);
+      bmExtract('https://www.youtube.com/watch?v=' + parsed.vid,
+        function (info) {
+          bmBusy = false;
+          clearStatus('link-status');
+          bmShowCard(info);
+        },
+        function (msg) {
+          bmBusy = false;
+          setStatus('link-status', tF('bm-extract-err', friendlyMsg(msg)), true);
+        });
+    });
+  }
+
   /* ---------- init ---------- */
 
   function init() {
@@ -1470,6 +1688,7 @@
     renderEngineUrl();
     bindEngineChange();
     bindSelTray();
+    bindBm();
     renderVersion();
     /* discovery best-effort del NAS self-host (l'URL del tunnel cambia a
        ogni riavvio: la pagina lo chiede al worker, che lo riceve dal NAS;

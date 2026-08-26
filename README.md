@@ -97,6 +97,32 @@ curl "https://xxx.trycloudflare.com/search?q=test"
 curl -I "https://xxx.trycloudflare.com/stream?id=dQw4w9WgXcQ&itag=140"
 ```
 
+## Modalità browser (yt-dlp nel browser, fallback senza engine)
+
+Quando l'engine NAS è bloccato da YouTube (anti-bot), la pagina può estrarre
+metadata **direttamente nel browser**: yt-dlp gira in WebAssembly (Pyodide)
+nel worker `browser/worker.js`, e parla con YouTube attraverso il **proxy
+CORS** `/proxy` del NAS (`server/index.js`). YouTube tratta quelle richieste
+come un client diverso dal nostro engine, quindi può passare dove l'engine
+viene rifiutato. I byte audio/video poi scendono diretti dal CDN, o via lo
+stesso proxy se il CDN non manda CORS.
+
+- Nel tab **Incolla link** compare il pulsante **“Estrai nel browser
+  (yt-dlp)”** (solo browser moderni con WebAssembly, ~2023+).
+- La prima volta scarica il runtime (~30 MB, poi resta in cache
+  IndexedDB); il resto dell'uso è leggero.
+- Onestà tecnica: **zero server assoluto non esiste** — i metadata di
+  YouTube richiedono CORS e YouTube non lo concede (preflight = 403), quindi
+  serve comunque un piccolo proxy: quello del NAS. Con il NAS raggiungibile
+  ma bloccato, la modalità browser è un fallback reale; con il NAS spento
+  non c'è proxy.
+- Browser datati (senza WebAssembly): il pulsante non compare, si usa solo
+  l'engine NAS.
+
+File coinvolti: `browser/worker.js` + `browser/network_patch.py` (porting
+MIT del progetto [yt-dlp.wasm](https://forgejo.phillippepelzer.me/FiLL/yt-dlp-wasm)),
+endpoint `/proxy` in `server/index.js`.
+
 ## Self-host: engine sul NAS (IP residenziale)
 
 L'engine gira come **server Node su un NAS/VPS** con IP residenziale:
@@ -379,6 +405,32 @@ and the page reads it instantly. No account, no worker.
 # on the NAS: only the GitHub token in server/.env (to publish nas-url.txt)
 GITHUB_TOKEN=<fine-grained PAT>
 ```
+
+## Browser mode (yt-dlp in the browser, engine-less fallback)
+
+When the NAS engine is blocked by YouTube (anti-bot), the page can extract
+metadata **directly in the browser**: yt-dlp runs in WebAssembly (Pyodide)
+in the `browser/worker.js` worker, talking to YouTube through the NAS's
+**CORS proxy** `/proxy` (`server/index.js`). YouTube treats those requests
+as a different client from our engine, so it can pass where the engine is
+refused. The audio/video bytes then flow straight from the CDN, or through
+the same proxy if the CDN does not send CORS.
+
+- In the **Paste link** tab a **“Extract in browser (yt-dlp)”** button
+  appears (modern browsers with WebAssembly only, ~2023+).
+- The first run downloads the runtime (~30 MB, then cached in IndexedDB);
+  afterwards it is lightweight.
+- Technical honesty: **absolute zero-server does not exist** — YouTube
+  metadata requires CORS and YouTube does not grant it (preflight = 403),
+  so a small proxy is still needed: the NAS one. With the NAS reachable but
+  blocked, browser mode is a real fallback; with the NAS off there is no
+  proxy.
+- Old browsers (no WebAssembly): the button does not appear, only the NAS
+  engine is used.
+
+Files: `browser/worker.js` + `browser/network_patch.py` (MIT port of the
+[yt-dlp.wasm](https://forgejo.phillippepelzer.me/FiLL/yt-dlp-wasm) project),
+`/proxy` endpoint in `server/index.js`.
 
 ## Self-hosting: engine on your NAS (residential IP)
 
