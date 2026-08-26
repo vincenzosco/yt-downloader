@@ -29,9 +29,11 @@ const REQUEST_KEY = "O43z0dpjhgX20SCx4KAo";
 let godToken = null;
 let godTokenAt = 0;
 let generating = null; // promise di generazione in corso
+let lastGenFailedAt = 0;
+let genFailures = 0;
 
 function isFresh(v) {
-  return !!v && Date.now() - godTokenAt < 10 * 60 * 60 * 1000; // 10h
+  return !!v && Date.now() - godTokenAt < 8 * 60 * 60 * 1000; // 8h (validità ~12h)
 }
 
 /* ---------- shim DOM minimale (la VM BotGuard tocca questi globali) ---------- */
@@ -198,12 +200,33 @@ async function generateToken() {
 
 // Genera all'avvio del modulo e, su richiesta, rigenera se il token è scaduto.
 installShim();
+
 function kickGenerate() {
-  generating = generateToken()
-    .then((t) => { godToken = t; godTokenAt = Date.now(); })
-    .catch(() => { /* ignora */ })
-    .finally(() => { generating = null; });
+  const attempt = (async () => {
+    // Retry con backoff: una singola failure non deve lasciare l'engine senza
+    // token per un intero isolate (startup-only new Function).
+    const maxAttempts = 3;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const t = await generateToken();
+        if (t) {
+          godToken = t;
+          godTokenAt = Date.now();
+          genFailures = 0;
+          return;
+        }
+      } catch (e) {
+        /* riprova */
+      }
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    }
+    lastGenFailedAt = Date.now();
+    genFailures++;
+  })();
+  generating = attempt;
+  return attempt;
 }
+
 try { kickGenerate(); } catch (e) { /* ignora */ }
 
 export async function getPoToken() {
@@ -212,4 +235,22 @@ export async function getPoToken() {
   if (!generating) { try { kickGenerate(); } catch (e) { return ''; } }
   try { await generating; } catch (e) { return ''; }
   return isFresh(godToken) ? godToken : '';
+}
+
+// Rigenera forzatamente il token (ignora la cache) e attende il risultato.
+// Usato quando YouTube risponde LOGIN_REQUIRED: un token fresco, generato
+// dopo il blocco, è il modo piu' affidabile di superarlo.
+export async function refreshPoToken() {
+  try {
+    const t = await generateToken();
+    if (t) {
+      godToken = t;
+      godTokenAt = Date.now();
+      genFailures = 0;
+      return t;
+    }
+  } catch (e) {
+    /* ignora */
+  }
+  return getPoToken(); // ultima risorsa: cache o vuoto
 }

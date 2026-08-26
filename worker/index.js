@@ -14,7 +14,8 @@
 //
 // Il PO token (bot-challenge) è generato nel worker stesso (worker/pot.js).
 
-import { getPoToken } from './pot.js';
+import { getPoToken, refreshPoToken } from './pot.js';
+import { getProxyReport } from './proxy-list.js';
 
 const YT_HOSTS = [
   'https://www.youtube.com/youtubei/v1',
@@ -314,18 +315,23 @@ async function getVisitorData(force) {
 }
 
 
-// esegue fn con ogni client (2 giri, visitorData fresco al secondo) finche'
-// non restituisce un valore; raccoglie anche le risposte parziali.
-// Se pot (PO token) è presente, lo inietta nel context del client: è il
-// meccanismo che YouTube usa per i client Web; per ANDROID aiuta a superare
-// il bot-challenge (token generato offline con un client fidato).
+// esegue fn con ogni client (fino a 3 giri) finche' non restituisce un
+// valore; raccoglie anche le risposte parziali. Ogni giro usa visitorData
+// fresco; se YouTube risponde con il bot-challenge (LOGIN_REQUIRED) e
+// abbiamo un PO token, rigeneriamo il token al giro successivo invece di
+// riusare lo stesso che e' stato bloccato.
 async function withClients(fn, pot) {
   let lastErr = null;
   const results = [];
-  for (let round = 0; round < 2; round++) {
-    const vd = await getVisitorData(round === 1);
+  for (let round = 0; round < 3; round++) {
+    const vd = await getVisitorData(round > 0);
     let clients = vd ? CLIENTS_PLAYER.map((c) => ({ ...c, visitorData: vd })) : CLIENTS_PLAYER;
-    if (pot) clients = clients.map((c) => ({ ...c, poToken: pot }));
+    let roundPot = pot;
+    // Al giro 1+ con pot attivo, usa un token rigenerato (il vecchio è stato bloccato)
+    if (round > 0 && pot) {
+      try { roundPot = await refreshPoToken(); } catch (e) { /* resta quello vecchio */ }
+    }
+    if (roundPot) clients = clients.map((c) => ({ ...c, poToken: roundPot }));
     for (let c = 0; c < clients.length; c++) {
       try {
         const value = await fn(clients[c]);
@@ -509,7 +515,18 @@ export default {
         const itag = (q.get('itag') || '').trim();
         return streamAudio(id, itag || null, request, await potFrom(q));
       }
-      return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/formats', '/playlist', '/stream'] });
+      if (path === '/proxies') {
+        const report = await getProxyReport();
+        return json({
+          ok: true,
+          updated: report.at,
+          sources: report.health,
+          total: report.proxies.length,
+          sample: report.proxies.slice(0, 50),
+          note: 'I proxy gratuiti NON sono utilizzabili dal worker CF free (fetch non supporta proxy; connect() richiede piano a pagamento). Lista mantenuta come infrastruttura e check di salute delle sorgenti.',
+        });
+      }
+      return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/formats', '/playlist', '/stream', '/proxies'] });
     } catch (e) {
       return json({ error: e.code || 'internal', message: e.message || 'errore interno' }, e.code ? 422 : 500);
     }

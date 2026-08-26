@@ -44,6 +44,7 @@ YouTube → URL audio/video → l'engine lo streama al browser → download
 | `/formats?id=…`    | tutti i formati (audio, progressive, video-only) |
 | `/playlist?list=…` | elenco tracce di una playlist                    |
 | `/stream?id=…&itag=…` | stream del file (CORS, Range), itag opzionale |
+| `/proxies`             | check di salute delle 5 liste proxy pubbliche |
 
 ## Deploy
 
@@ -69,7 +70,15 @@ curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
 - `worker/index.js` — logica engine (Web API standard).
 - `worker/pot.js` — generazione PO token (anti-bot) con `bgutils-js`
   (dipendenza npm in `worker/package.json`). Genera il token all'avvio del
-  worker e lo rigenera su richiesta se scade.
+  worker, lo rigenera su richiesta se scade (TTL 8h) e, se YouTube risponde
+  `LOGIN_REQUIRED`, **rigenera forzatamente il token** (il blocco è spesso
+  legato al token usato, non all'IP).
+- `worker/proxy-list.js` — gestore di liste proxy pubbliche: scarica da 5
+  sorgenti, fa un check di salute per sorgente (HTTP + parse), deduplica
+  host:porta e fa auto-refresh con TTL 15 min. Esposto da `/proxies`.
+  **Nota**: sul piano gratuito del worker `fetch()` non può passare attraverso
+  un proxy (servirebbe `connect()`, solo a pagamento) — la lista è usata come
+  infrastruttura e check di salute, non per instradare il traffico YouTube.
 
 ### Test locale
 
@@ -79,6 +88,9 @@ node worker/test.js
 
 # test della generazione PO token (Node.js)
 cd worker && node pot-test.mjs
+
+# test delle 5 liste proxy (Node.js, check di salute)
+cd worker && node proxy-test.mjs
 ```
 
 ## Note
@@ -93,6 +105,18 @@ cd worker && node pot-test.mjs
   servizio WAA un token valido (integrity o websafe-fallback). Il token viene
   iniettato nelle richieste `/info`, `/formats`, `/stream` e supera il
   bot-challenge. È un ulteriore strato sopra `visitorData` + retry.
+- **Anti-bot aggressivo**: 3 giri di client con `visitorData` fresco; quando
+  una richiesta risponde `LOGIN_REQUIRED`, il worker rigenera il PO token
+  (non riusa quello bloccato) e riprova. La generazione ha retry con backoff
+  (3 tentativi) e TTL di 8h.
+- **Proxy gratuiti (5 liste)**: il worker scarica e controlla le liste proxy
+  pubbliche (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) con check
+  di salute e auto-refresh (`/proxies`). ⚠️ Sul piano gratuito Cloudflare il
+  `fetch()` del worker non può passare *attraverso* un proxy (serve
+  `connect()`, solo a pagamento), quindi le liste non instradano il traffico
+  YouTube: restano disponibili come infrastruttura per un eventuale engine
+  esterno. In più i proxy gratuiti sono quasi tutti IP di datacenter — la
+  stessa categoria che YouTube flagga.
 - **Limite reale**: un uso frequente continuato fa comunque scattare il blocco
   sull'IP del worker (il PO token non garantisce il 100%). Si azzera da solo in
   pochi minuti/ore. L'uso normale (qualche canzone) non lo innesca. Per un uso
@@ -148,6 +172,7 @@ own anti-bot PO token (`worker/pot.js`) inside the worker.
 | `/formats?id=…`    | all available formats (audio, progressive, video)|
 | `/playlist?list=…` | playlist track list                              |
 | `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
+| `/proxies`             | health check of the 5 public proxy lists     |
 
 ## Deploy
 
@@ -163,7 +188,16 @@ npx wrangler deploy
 
 - `index.html`, `style.css`, `app.js` — static page, ES5 (no framework, no build).
 - `worker/index.js` — engine logic (standard Web APIs).
-- `worker/pot.js` — anti-bot PO token generation (`bgutils-js`).
+- `worker/pot.js` — anti-bot PO token generation (`bgutils-js`). Generates
+  the token at worker startup, refreshes it on demand (8h TTL) and, when
+  YouTube answers `LOGIN_REQUIRED`, **force-regenerates the token** (the
+  block is often bound to the token used, not the IP).
+- `worker/proxy-list.js` — public proxy-list manager: fetches 5 sources,
+  health-checks each source (HTTP + parse), dedupes host:port and
+  auto-refreshes with a 15-min TTL. Exposed via `/proxies`.
+  **Note**: on the free worker plan `fetch()` cannot route traffic *through*
+  a proxy (that needs `connect()`, paid only) — the list is kept as
+  infrastructure and source health-check, not to route YouTube traffic.
 
 ## Notes
 
@@ -172,6 +206,17 @@ npx wrangler deploy
   on datacenter IPs. The worker generates a PO token with `bgutils-js`
   (`worker/pot.js`) and injects it into `/info`, `/formats`, `/stream` to
   pass the challenge.
+- **Aggressive anti-bot**: 3 rounds of clients with fresh `visitorData`;
+  when a request answers `LOGIN_REQUIRED`, the worker regenerates the PO
+  token (not the blocked one) and retries. Generation has retry-with-backoff
+  (3 attempts) and an 8h TTL.
+- **Free proxies (5 lists)**: the worker fetches and health-checks public
+  proxy lists (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) with
+  auto-refresh (`/proxies`). ⚠️ On the free Cloudflare plan the worker's
+  `fetch()` cannot go *through* a proxy (`connect()` is paid only), so the
+  lists do not route YouTube traffic: they stay available as infrastructure
+  for a possible external engine. Also, free proxies are almost all
+  datacenter IPs — the very category YouTube flags.
 - **Real limit**: heavy continued use still triggers blocks on the worker IP
   (PO token is not 100%). It resets on its own in minutes/hours. Normal use
   (a few songs) is fine. For heavy use you'd need an extra provider or a
