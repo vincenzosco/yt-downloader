@@ -181,13 +181,22 @@ La pagina usa **solo il NAS** come engine:
 Configurazione (una tantum, sul NAS e sul worker):
 
 ```bash
-# 1) sul worker: chiave condivisa (una sola volta)
+# 1) sul worker: chiave condivisa (una sola volta, opzionale)
 cd worker && openssl rand -hex 24 | npx wrangler secret put NAS_REGISTER_KEY
 
 # 2) sul NAS: stessa chiave + URL del worker in server/.env (non in git)
 cat > server/.env <<EOF
 NAS_REGISTER_KEY=<stessa chiave>
 REGISTER_WORKER=https://xxx.workers.dev
+EOF
+
+# 3) (consigliato) token GitHub: il NAS pubblica il suo URL su GitHub
+#    (nas-url.txt) — la pagina lo legge direttamente dal repo, così
+#    l'indirizzo resta aggiornato anche SENZA worker. Crea un fine-grained
+#    PAT (GitHub → Settings → Developer settings → Fine-grained tokens →
+#    repo vincenzosco/yt-downloader → Contents: Read and write) e:
+cat >> server/.env <<EOF
+GITHUB_TOKEN=<fine-grained PAT>
 EOF
 ```
 
@@ -196,9 +205,12 @@ attivo) → …`). Resta comunque possibile forzare un engine specifico con il
 campo “Engine URL” (in cima, a destra).
 
 > **Nota**: con il tunnel gratuito `trycloudflare` l'URL cambia a ogni
-> riavvio del tunnel, ma il NAS lo ri-registra da solo: la pagina non se ne
-> accorge. Per un URL *stabile* serve comunque un tunnel “named” (richiede
-> un account Cloudflare e un dominio).
+> riavvio del tunnel. Dopo un riavvio del NAS: il programma riparte da solo
+> (rc.d `S99ytd.sh` + watchdog) e il NAS **pubblica il nuovo URL su GitHub**
+> (`nas-url.txt`), che la pagina legge istantaneamente (fallback: worker
+> `/nas`). Senza token GitHub e senza worker, va incollato a mano. Per un
+> URL *stabile* serve comunque un tunnel “named” (richiede un account
+> Cloudflare e un dominio).
 
 ## Sviluppo
 
@@ -467,6 +479,15 @@ cat > server/.env <<EOF
 NAS_REGISTER_KEY=<same key>
 REGISTER_WORKER=https://xxx.workers.dev
 EOF
+
+# 3) (recommended) GitHub token: the NAS publishes its URL to GitHub
+#    (nas-url.txt) — the page reads it straight from the repo, so the
+#    address stays updated even WITHOUT the worker. Create a fine-grained
+#    PAT (GitHub → Settings → Developer settings → Fine-grained tokens →
+#    repo vincenzosco/yt-downloader → Contents: Read and write) and:
+cat >> server/.env <<EOF
+GITHUB_TOKEN=<fine-grained PAT>
+EOF
 ```
 
 The page footer shows the active NAS (e.g. `…trycloudflare.com (NAS
@@ -474,8 +495,11 @@ active) → …`). You can still force a specific engine with the “Engine URL�
 field (top right).
 
 > **Note**: with the free `trycloudflare` tunnel the URL changes on every
-> tunnel restart, but the NAS re-registers it by itself: the page never
-> notices. For a *stable* URL you still need a “named” tunnel (requires a
+> tunnel restart. After a NAS reboot: the program restarts by itself
+> (rc.d `S99ytd.sh` + watchdog) and the NAS **publishes the new URL to
+> GitHub** (`nas-url.txt`), which the page reads instantly (fallback: worker
+> `/nas`). Without the GitHub token and without the worker, paste it
+> manually. For a *stable* URL you still need a “named” tunnel (requires a
 > Cloudflare account and a domain).
 
 ### Local tests

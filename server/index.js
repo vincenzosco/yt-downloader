@@ -14,6 +14,7 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { publishTunnelUrl } from './publish-url.js';
 
 // il server deve restare su (NAS/VPS): un errore isolato non deve ucciderlo
 process.on('uncaughtException', (e) => console.error('[server] uncaughtException:', e && e.stack ? e.stack : e));
@@ -88,6 +89,25 @@ async function registerTunnel() {
 // registra subito e poi ogni 60s (l'URL del tunnel può cambiare)
 registerTunnel();
 setInterval(registerTunnel, 60 * 1000);
+
+// ---- pubblicazione dell'URL su GitHub (nas-url.txt) ----
+// La pagina legge il file direttamente dal repo: l'indirizzo del NAS resta
+// aggiornato anche senza worker. Scrive solo quando l'URL cambia.
+let lastGithubUrl = null;
+async function publishTunnel() {
+  if (!process.env.GITHUB_TOKEN) return;
+  const url = tunnelUrlFromLog();
+  if (!url) return;
+  const r = await publishTunnelUrl(url);
+  if (r.ok && url !== lastGithubUrl) {
+    lastGithubUrl = url;
+    console.log('[nas] pubblicato su GitHub:', url);
+  } else if (!r.ok && !r.cached && r.reason !== 'nessun URL') {
+    console.error('[nas] pubblicazione GitHub fallita:', r.reason);
+  }
+}
+publishTunnel();
+setInterval(publishTunnel, 60 * 1000);
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 

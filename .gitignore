@@ -3,3 +3,4 @@ node_modules/
 .dev.vars
 .freebuff/
 server/.env
+server/.published-url

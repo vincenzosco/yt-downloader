@@ -8,6 +8,9 @@
      serve esclusivamente come rubrica best-effort per la discovery del
      NAS (/nas): se il worker non c'e' (rimosso), si incolla l'URL a mano. */
   var ENGINE_DISCOVERY = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
+  /* il NAS pubblica il suo URL attuale su GitHub (nas-url.txt): la pagina
+     lo legge qui — istantaneo e senza dipendere dal worker Cloudflare */
+  var NAS_URL_FILE = 'https://raw.githubusercontent.com/vincenzosco/yt-downloader/main/nas-url.txt';
   var ENGINE_KEY = 'ytd.engine';
   var LAST_GOOD_KEY = 'ytd.lastGood';
 
@@ -257,32 +260,50 @@
   var nasChecked = 0;
   var nasChecking = false;
 
-  /* chiede al worker l'URL corrente del NAS self-host (best-effort): il
-     NAS continua a registrarsi "sempre e comunque"; se il worker c'e' la
-     pagina trova il NAS da sola, se non c'e' (rimosso) il fallimento e'
-     silenzioso e si usa l'URL incollato a mano. */
+  /* rubrica dell'URL del NAS, in ordine:
+     1) nas-url.txt pubblicato dal NAS sul repo GitHub (istantaneo, senza
+        worker: il NAS si riavvia, pubblica il nuovo URL, la pagina lo legge)
+     2) worker /nas (best-effort, se ancora attivo)
+     Se falliscono entrambe in silenzio, si usa l'URL incollato a mano. */
   function refreshNas(force) {
     if (nasChecking) return;
     if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
     nasChecking = true;
     nasChecked = Date.now();
-    var x = new XMLHttpRequest();
-    x.open('GET', ENGINE_DISCOVERY + '/nas?t=' + Date.now(), true);
-    x.timeout = 8000;
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
+    function done(u) {
       nasChecking = false;
-      if (x.status >= 200 && x.status < 300) {
-        try {
-          var d = JSON.parse(x.responseText);
-          nasUrl = (d && d.url) ? d.url : null;
-        } catch (e) { nasUrl = null; }
-        if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
-      }
-    };
-    x.onerror = function () { nasChecking = false; };
-    x.ontimeout = function () { nasChecking = false; };
-    x.send();
+      nasUrl = u;
+      if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(u);
+    }
+    function ask(url, cb) {
+      var x = new XMLHttpRequest();
+      x.open('GET', url, true);
+      x.timeout = 8000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        if (x.status >= 200 && x.status < 300) cb(x.responseText);
+        else cb(null);
+      };
+      x.onerror = function () { cb(null); };
+      x.ontimeout = function () { cb(null); };
+      x.send();
+    }
+    /* 1) file pubblicato dal NAS su GitHub */
+    ask(NAS_URL_FILE + '?t=' + Date.now(), function (txt) {
+      var t = String(txt == null ? '' : txt).trim();
+      if (/^https:\/\//.test(t)) { done(t); return; }
+      /* 2) fallback: rubrica sul worker */
+      ask(ENGINE_DISCOVERY + '/nas?t=' + Date.now(), function (raw) {
+        if (raw) {
+          try {
+            var d = JSON.parse(raw);
+            done((d && d.url) ? d.url : null);
+            return;
+          } catch (e) { /* ignora */ }
+        }
+        done(null);
+      });
+    });
   }
 
   function engines() {
@@ -358,6 +379,10 @@
           setTimeout(next, w * 1000);
           return;
         }
+        /* l'URL del NAS potrebbe essere cambiato (es. riavvio del NAS con
+           tunnel nuovo): riscopri subito così il prossimo tentativo usa
+           l'indirizzo aggiornato */
+        refreshNas(true);
         err(lastErr ? friendlyMsg(lastErr) + ' (' + engineLabel(lastEngine) + ')' : 'all engines failed');
         return;
       }
@@ -406,6 +431,7 @@
           setTimeout(next, w * 1000);
           return;
         }
+        refreshNas(true);
         err((lastErr === 'interrotto') ? 'interrotto' : (lastErr ? friendlyMsg(lastErr) : 'all engines failed'));
         return;
       }
