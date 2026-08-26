@@ -233,17 +233,21 @@
     try { window.localStorage.removeItem(key); } catch (e) { /* niente */ }
   }
 
-  /* ---------- engine: API pubbliche di Piped (browser-direct, zero server) ----------
-     La pagina parla DIRETTAMENTE con le istanze pubbliche di Piped (gratis,
-     senza account, CORS permissivo): nessun server dietro, funziona da sola
-     su GitHub Pages. YouTube blocca/cambia le istanze pubbliche in modo
+  /* ---------- engine: API pubbliche di Piped + Invidious (browser-direct, zero server) ----------
+     La pagina parla DIRETTAMENTE con le istanze pubbliche di due backend:
+       - Piped (default, quando vivo)
+       - Invidious (fallback, usato se TUTTO Piped fallisce)
+     Gratis, senza account, CORS permissivo; nessun server dietro, funziona da
+     sola su GitHub Pages. YouTube blocca/cambia le istanze pubbliche in modo
      intermittente (anti-bot), quindi la pagina:
-       - tiene un pool di istanze e le verifica (health check) ogni pochi minuti
+       - tiene un pool per entrambi i backend e le verifica (health check)
+         ogni pochi minuti
        - usa la prima viva, salvata anche in localStorage per ripartire subito
-       - se un'istanza fallisce, la scarta e passa alle altre in automatico
+       - se un'istanza fallisce, la scarta e passa alle altre in automatico;
+         se fallisce tutto Piped, pirotta su Invidious
      Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
-     la pagina riprova da sola con attese crescenti (retryCall) e alla fine
-     mostra un messaggio chiaro. */
+     la pagina riprova da sola con attese crescenti e alla fine mostra un
+     messaggio chiaro. */
 
   /* Pool di istanze pubbliche di Piped, ordinate con le più vicine/affidabili
      in cima. Le istanze pubbliche nascono e muoiono spesso (anti-bot di
@@ -279,6 +283,83 @@
   var pipedBase = '';
   var pipedChecked = 0;
   var pipedChecking = false;
+
+  /* ---- backend di riserva: Invidious (usato se TUTTO Piped fallisce) ----
+     Invidious oggi risponde quasi ovunque 403 (YouTube blocca anche lui),
+     quindi è codice pronto ma inattivo: appena una delle istanze qui sotto
+     (o l'una trovatane nelle liste remote) torna viva, la pagina la usa. */
+  var INVID_POOL = [
+    'https://inv.nadeko.net',
+    'https://invidious.nerdvpn.de',
+    'https://invidious.f5.si',
+    'https://invidious.tiekoetter.com'
+  ];
+  var INVID_KEY = 'ytd.invid';
+  var invidBase = '';
+  var invidChecked = 0;
+  var invidChecking = false;
+
+  function invidLoadCache() {
+    try {
+      var j = JSON.parse(window.localStorage.getItem(INVID_KEY) || 'null');
+      if (j && j.base && j.at && (Date.now() - j.at) < PIPED_TTL) return j.base;
+    } catch (e) { /* ignora */ }
+    return '';
+  }
+  function invidSave(base) {
+    try {
+      window.localStorage.setItem(INVID_KEY, JSON.stringify({ base: base, at: Date.now() }));
+    } catch (e) { /* ignora */ }
+  }
+
+  /* lista ufficiale istanze Invidious (api.invidious.io/instances.json, CORS *) */
+  var INVID_LIST_SOURCE = 'https://api.invidious.io/instances.json?pretty=1';
+
+  function invidProbe(base, cb) {
+    var x = new XMLHttpRequest();
+    x.open('GET', base + '/api/v1/search?q=probe', true); /* search reale, non healthcheck */
+    x.timeout = 8000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      /* Invidious può rispondere 403 "Endpoint disabled" anche se l'istanza è
+         su: meglio provarla comunque in pipedGet-style. Qui conta solo se la
+         rotta HTTP esiste (2xx/3xx): i 403 si valutano all'uso. */
+      cb(x.status > 0); /* qualunque risposta HTTP = host raggiungibile */
+    };
+    x.onerror = function () { cb(false); };
+    x.ontimeout = function () { cb(false); };
+    x.send();
+  }
+
+  function invidRefresh(force, cb) {
+    if (invidChecking) { if (cb) setTimeout(function () { cb(invidBase); }, 200); return; }
+    if (!force && invidBase && invidChecked && (Date.now() - invidChecked) < PIPED_TTL) {
+      if (cb) cb(invidBase); return;
+    }
+    var cached = invidLoadCache();
+    if (!force && cached && !invidBase) { invidBase = cached; invidChecked = Date.now(); if (cb) cb(invidBase); return; }
+    invidChecking = true;
+    /* c'è solitamente 1 sola istanza viva: prova prima la cache/fallback noti */
+    var pool = INVID_POOL;
+    var alive = [];
+    var pending = pool.length;
+    if (!pending) { invidChecking = false; if (cb) cb(''); return; }
+    for (var i = 0; i < pool.length; i++) {
+      (function (base) {
+        invidProbe(base, function (ok) {
+          if (ok && alive.indexOf(base) === -1) alive.push(base);
+          pending--;
+          if (pending === 0) {
+            invidChecking = false;
+            invidChecked = Date.now();
+            invidBase = alive.length ? alive[0] : (cached || '');
+            if (invidBase) invidSave(invidBase);
+            if (cb) cb(invidBase);
+          }
+        });
+      })(pool[i]);
+    }
+  }
 
   function pipedLoadCache() {
     try {
@@ -626,6 +707,33 @@
     return null;
   }
 
+  /* ---------- dispatch: Piped prima, poi Invidious ----------
+     Ogni operazione prova il backend Piped; se TUTTO Piped fallisce (nessuna
+     istanza viva o tutte bloccate), pirotta su Invidious. Così la pagina ha
+     due famiglie di API e passa da una all'altra in automatico. */
+
+  function runBoth(o, fallback, ok, err) {
+    o(function (val) { ok(val); }, function (msg) {
+      /* Piped fallito: proviamo Invidious */
+      fallback(function (val2) { ok(val2); }, function (msg2) {
+        err(msg2 || msg || t('piped-none'));
+      });
+    });
+  }
+
+  function ytSearch(q, ok, err) {
+    runBoth(function (o, e) { pipedSearch(q, o, e); },
+      function (o, e) { invidSearch(q, o, e); }, ok, err);
+  }
+  function ytFormats(id, ok, err) {
+    runBoth(function (o, e) { pipedFormats(id, o, e); },
+      function (o, e) { invidFormats(id, o, e); }, ok, err);
+  }
+  function ytPlaylist(list, ok, err) {
+    runBoth(function (o, e) { pipedPlaylist(list, o, e); },
+      function (o, e) { invidPlaylist(list, o, e); }, ok, err);
+  }
+
   function pipedPlaylist(list, ok, err) {
     var tries = 0;
     (function go() {
@@ -645,7 +753,132 @@
     })();
   }
 
-  /* scarica i byte di uno stream (URL diretto Piped, CORS permissivo) */
+  /* ---------- mapping dei dati Invidious (backend di riserva) ---------- */
+
+  /* normalizza un item di ricerca/playlist di Invidious nel modello della pagina */
+  function invidItem(it) {
+    var thumbs = (it && it.videoThumbnails) || [];
+    var t = '';
+    for (var i = 0; i < thumbs.length; i++) if (thumbs[i] && thumbs[i].url) { t = thumbs[i].url; break; }
+    return {
+      id: it.videoId || '',
+      title: it.title || '',
+      author: it.author || '',
+      duration: fmtDur(it.lengthSeconds),
+      views: fmtViews(it.viewCount),
+      thumb: t || thumbFor(it.videoId)
+    };
+  }
+
+  /* formato Invidious (adaptive/formatStreams) -> formato della pagina */
+  function invidFmt(s, isAudio) {
+    var q = String(s.quality || '');
+    var height = parseInt(String(q).match(/(\d+)/), 10) || 0;
+    var bitrate = parseInt(s.bitrate, 10) || 0;
+    var kbps = Math.round(bitrate / 1000) || 0;
+    var label;
+    if (isAudio) label = kbps > 0 ? kbps + ' kbps' : (q || 'audio');
+    else label = height > 0 ? (q.indexOf('60') !== -1 ? height + 'p60' : height + 'p') : (q || 'video');
+    return {
+      itag: String(s.itag),
+      label: label,
+      mime: s.type || '',
+      size: 0,
+      url: s.url || '',
+      height: height,
+      kbps: kbps
+    };
+  }
+
+  function invidGet(path, ok, err, maxAttempts) {
+    var maxA = maxAttempts || 3;
+    invidRefresh(false, function (base) {
+      if (!base) { err(t('piped-none')); return; }
+      var attempts = 0;
+      (function go() {
+        attempts++;
+        var x = new XMLHttpRequest();
+        x.open('GET', base + path, true);
+        x.timeout = 15000;
+        x.onreadystatechange = function () {
+          if (x.readyState !== 4) return;
+          if (x.status >= 200 && x.status < 300) {
+            var data = null;
+            try { data = JSON.parse(x.responseText); } catch (e) { err('invalid response'); return; }
+            if (data && data.error && !Array.isArray(data)) { err(String(data.error)); return; }
+            ok(data);
+          } else {
+            var msg = (x.status === 0) ? 'network error' : 'errore ' + x.status;
+            if (attempts < maxA && shouldRetry(msg)) {
+              setTimeout(go, 1500 * attempts);
+            } else err(msg);
+          }
+        };
+        x.onerror = function () {
+          if (attempts < maxA) setTimeout(go, 1500 * attempts); else err('network error');
+        };
+        x.send();
+      })();
+    });
+  }
+
+  function invidSearch(q, ok, err) {
+    invidGet('/api/v1/search?q=' + encodeURIComponent(q), function (arr) {
+      var out = [];
+      var src = (arr && arr.length) ? arr : [];
+      for (var i = 0; i < src.length; i++) {
+        if (!src[i] || src[i].type !== 'video') continue;
+        var it = invidItem(src[i]);
+        if (it.id) out.push(it);
+      }
+      ok(out);
+    }, err, 3);
+  }
+
+  function invidFormats(id, ok, err) {
+    invidGet('/api/v1/videos/' + encodeURIComponent(id), function (data) {
+      var audio = [], progressive = [], video = [];
+      var ad = data.adaptiveFormats || [];
+      for (var i = 0; i < ad.length; i++) {
+        var s = ad[i];
+        if (!s || !s.url) continue;
+        var isAudio = /^audio\//.test(String(s.type || ''));
+        var f = invidFmt(s, isAudio);
+        if (isAudio && !f.kbps) f.label = s.audioQuality || 'audio';
+        if (isAudio) audio.push(f);
+        else video.push(f);
+      }
+      var fs = data.formatStreams || [];
+      for (var j = 0; j < fs.length; j++) if (fs[j] && fs[j].url) progressive.push(invidFmt(fs[j], false));
+      audio.sort(byKbps);
+      progressive.sort(byHeight);
+      video.sort(byHeight);
+      ok({
+        info: {
+          id: id,
+          title: data.title || '',
+          author: data.author || '',
+          seconds: data.lengthSeconds || 0,
+          thumb: data.thumbnailUrl || thumbFor(id)
+        },
+        audio: audio, progressive: progressive, video: video
+      });
+    }, err, 4);
+  }
+
+  function invidPlaylist(list, ok, err) {
+    invidGet('/api/v1/playlists/' + encodeURIComponent(list), function (data) {
+      var items = (data && data.videos) || [];
+      var out = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = invidItem(items[i]);
+        if (it.id) out.push(it);
+      }
+      ok({ name: (data && data.title) || '', items: out });
+    }, err, 3);
+  }
+
+  /* scarica i byte di uno stream (URL diretto Piped/Invidious, CORS permissivo) */
   function xhrBlobUrl(url, ok, err, onProgress) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
@@ -666,7 +899,8 @@
     if (!el) return;
     if (pipedBase) {
       var host = pipedBase.replace(/^https?:\/\//, '').split('/')[0];
-      el.textContent = t('piped-label') + ' \u00B7 ' + host;
+      var extra = (invidBase && invidBase !== pipedBase) ? ' \u00B7 +Invidious' : '';
+      el.textContent = t('piped-label') + ' \u00B7 ' + host + extra;
     } else {
       el.textContent = t('piped-checking');
     }
@@ -788,7 +1022,7 @@
       row.appendChild(p);
       btn.textContent = '\u25A0';
       setStatus(statusId || 'search-status', t('loading-stream'), false);
-      pipedFormats(item.id,
+      ytFormats(item.id,
         function (fmts) {
           clearStatus(statusId || 'search-status');
           var fmt = pickStream(fmts);
@@ -814,7 +1048,7 @@
         buildPicker(container, item, fmts, label, statusId);
       }
       if (cachedFmts) { got(cachedFmts); return; }
-      pipedFormats(item.id,
+      ytFormats(item.id,
         got,
         function (msg) {
           btn.removeAttribute('data-busy');
@@ -946,7 +1180,7 @@
   /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
   function fetchAudio(item, itag, ext, onProgress, onDone, onErr) {
     var title = item.title || item.id;
-    pipedFormats(item.id,
+    ytFormats(item.id,
       function (fmts) {
         var fmt = null;
         if (itag) {
@@ -1191,7 +1425,7 @@
   /* scarica una canzone come bytes per lo zip: miglior stream disponibile
      (audio-only se c'è, altrimenti muxed), estensione dal Content-Type. */
   function fetchZipItem(item, ok, err, onProgress) {
-    pipedFormats(item.id,
+    ytFormats(item.id,
       function (fmts) {
         var fmt = pickStream(fmts);
         if (!fmt) { err(t('zip-unavailable')); return; }
@@ -1273,7 +1507,7 @@
     var list = $('search-results');
     list.innerHTML = '';
     setStatus('search-status', t('searching'));
-    pipedSearch(q,
+    ytSearch(q,
       function (results) {
         clearStatus('search-status');
         if (!results.length) { setStatus('search-status', tF('no-results', q), true); return; }
@@ -1355,7 +1589,7 @@
     card.appendChild(previewWrap);
 
     setStatus('link-status', t('loading-info'), false);
-    pipedFormats(vid,
+    ytFormats(vid,
       function (fmts) {
         clearStatus('link-status');
         var info = fmts.info;
@@ -1414,7 +1648,7 @@
     var card = buildCard(thumbFor(''), 'Playlist', '\u2026', '', null);
     box.appendChild(card);
     setStatus('link-status', t('loading-tracks'), false);
-    pipedPlaylist(list,
+    ytPlaylist(list,
       function (data) {
         clearStatus('link-status');
         var items = data.items || [];
@@ -1561,6 +1795,11 @@
     extractUrls: function (body) { return pipedUrlsFrom(body); },
     lists: function (cb) { pipedFetchLists(cb); }
   };
+  window.__ytdInvid = {
+    base: function () { return invidBase; },
+    refresh: function (force, cb) { invidRefresh(force, cb); },
+    pool: INVID_POOL
+  };
 
   /* ---------- init ---------- */
 
@@ -1574,6 +1813,9 @@
     window.__ytdOnPiped = function (u) { pipedBase = u; renderPipedStatus(); };
     pipedRefresh(false, function () { renderPipedStatus(); });
     setInterval(function () { pipedRefresh(false, function () { renderPipedStatus(); }); }, PIPED_TTL);
+    /* discovery dell'eventuale istanza Invidious di riserva (best-effort) */
+    invidRefresh(false, function () { renderPipedStatus(); });
+    setInterval(function () { invidRefresh(false, function () { renderPipedStatus(); }); }, PIPED_TTL);
     setTimeout(checkVersion, 4000);
     setInterval(checkVersion, 60000);
 

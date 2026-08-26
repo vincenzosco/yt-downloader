@@ -46,9 +46,15 @@ download
 Le istanze pubbliche vengono **bloccate/cambiate da YouTube in modo
 intermittente** (anti-bot). La pagina gestisce da sola la cosa:
 
-- tiene un **pool di istanze** e le **verifica** (health check) ogni 5 minuti,
-  usando la prima viva (ricordata in `localStorage` per ripartire subito);
+- tiene un **pool di istanze** di **due backend** (Piped + Invidious) e le
+  **verifica** (health check) ogni 5 minuti, usando la prima viva (ricordata
+  in `localStorage` per ripartire subito);
 - se un'istanza fallisce, la scarta e **passa alle altre in automatico**;
+- se **tutto Piped fallisce**, pirotta su **Invidious** come backend di
+  riserva;
+- **scarica a runtime le liste ufficiali** (TeamPiped documentation e
+  api.invidious.io) così se spunta una nuova istanza viva la pagina la
+  scopre da sola, senza aggiornare il codice;
 - quando YouTube blocca l'istanza (“Sign in to confirm you're not a bot”),
   la pagina **riprova da sola** con attese crescenti e mostra un messaggio
   chiaro se il blocco persiste: basta riprovare tra qualche minuto.
@@ -66,6 +72,10 @@ intermittente le istanze pubbliche gratuite. Per questo:
   Nei momenti di blocco la pagina ritenta da sola e poi chiede di riprovare.
 - **Playlist**: l'estrazione dipende dall'istanza; se bloccata la pagina
   mostra un messaggio esplicito.
+- **Backend di riserva**: Invidious è incluso come fallback, ma **oggi le
+  sue istanze pubbliche non danno CORS permissivo né rispondono** (YouTube
+  le blocca con 403/401) — quindi è codice pronto che si attiva da solo
+  appena una istanza Invidious torna viva e raggiungibile dal browser.
 - Per un download **garantito** servirebbe un server con IP diverso dal tuo
   (es. un VPS da ~3€/mese): è l'unica strada che YouTube non riesce a
   bloccare a lungo. La pagina attuale è la migliore opzione possibile
@@ -160,10 +170,16 @@ download
 Public instances get **blocked/changed by YouTube intermittently**
 (anti-bot). The page handles it by itself:
 
-- keeps a **pool of instances** and **health-checks** them every 5 minutes,
-  using the first alive one (remembered in `localStorage` to start fast);
+- keeps a **pool of instances from two backends** (Piped + Invidious) and
+  **health-checks** them every 5 minutes, using the first alive one
+  (remembered in `localStorage` to start fast);
 - if an instance fails, it discards it and **falls through to the others
   automatically**;
+- if **all of Piped fails**, it fails over to **Invidious** as a reserve
+  backend;
+- **downloads the official instance lists at runtime** (TeamPiped
+  documentation and api.invidious.io), so if a new alive instance appears
+  the page discovers it by itself, without a code update;
 - when YouTube blocks the instance (“Sign in to confirm you're not a bot”),
   the page **retries on its own** with increasing waits and shows a clear
   message if the block persists: just try again in a few minutes.
@@ -181,6 +197,11 @@ blocks free public instances. Therefore:
   block windows the page retries by itself, then asks you to retry later.
 - **Playlists**: extraction depends on the instance; if blocked, the page
   shows an explicit message.
+- **Reserve backend**: Invidious is included as a fallback, but **today its
+  public instances do not grant permissive CORS nor respond** (YouTube
+  blocks them with 403/401) — so it is ready code that activates on its own
+  as soon as an Invidious instance comes back alive and reachable from the
+  browser.
 - For **guaranteed** downloads you would need a server on a different IP
   than yours (e.g. a ~3€/month VPS): it is the only route YouTube cannot
   block for long. This page is the best option possible **without a server**.
