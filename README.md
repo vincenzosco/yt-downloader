@@ -32,7 +32,10 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 ## Come funziona
 
-GitHub Pages (statico) + engine serverless (Cloudflare Worker). YouTube blocca le chiamate con header `Origin` (il browser non può chiamare direttamente le API interne). L'engine le chiama lato server, senza `Origin`.
+GitHub Pages (statico) + engine sul NAS (server Node sul tuo NAS, IP
+residenziale). YouTube blocca le chiamate con header `Origin` (il browser
+non può chiamare direttamente le API interne). L'engine le chiama lato
+server, senza `Origin`.
 
 ```
 browser (pagina statica su GitHub Pages)
@@ -40,8 +43,8 @@ browser (pagina statica su GitHub Pages)
    │  chiamate all'engine (CORS *)
    ▼
 engine: NAS self-host (unico engine; la pagina prova custom → NAS,
-   ultimo-funzionante per primo). Il worker Cloudflare è SOLO una rubrica
-   best-effort per la discovery (/nas): senza worker si incolla l'URL a mano
+   ultimo-funzionante per primo). L'URL del NAS è pubblicato su GitHub
+   (nas-url.txt): la pagina lo legge direttamente, senza worker Cloudflare
    │  API Innertube lato server, senza Origin, retry su più host/client
    │  PO token (anti-bot) generato dentro l'engine
    ▼
@@ -74,36 +77,32 @@ con:
 bash tools/bump.sh
 ```
 
-## Deploy (facoltativo: solo per la discovery del NAS)
+## Deploy
 
 La pagina **funziona senza Cloudflare**: l'engine è il NAS, raggiunto via
-tunnel (https) o con un URL incollato a mano. Il worker serve solo come
-rubrica best-effort: se è attivo, la pagina trova da sola l'URL corrente
-del NAS (che cambia a ogni riavvio del tunnel); se non c'è, si incolla
-l'URL nel footer ("cambia"). Il NAS continua a registrarsi "sempre e
-comunque" (heartbeat ogni 60s), quindi se un giorno riattivi il worker
-tutto si auto-configura da solo.
+tunnel (https) o con un URL incollato a mano. La rubrica dell'URL è GitHub
+(`nas-url.txt`): il NAS pubblica il suo URL a ogni cambio (dopo un riavvio
+il tunnel ha un URL nuovo, il NAS lo pubblica da solo entro ~60s) e la
+pagina lo legge istantaneamente. Niente account, niente worker.
 
 ```bash
-cd worker
-npx wrangler login
-npx wrangler deploy            # opzionale: rubrica /nas
-npx wrangler deploy --name yt-downloader2   # opzionale: solo ridondanza rubrica
+# sul NAS: solo il token GitHub in server/.env (per pubblicare nas-url.txt)
+GITHUB_TOKEN=<fine-grained PAT>
 ```
 
-Test rapido:
+Test rapido (URL del tunnel corrente, vedi `nas-url.txt`):
 
 ```bash
-curl "https://xxx.workers.dev/search?q=test"
-curl -I "https://xxx.workers.dev/stream?id=dQw4w9WgXcQ&itag=140"
+curl "https://xxx.trycloudflare.com/search?q=test"
+curl -I "https://xxx.trycloudflare.com/stream?id=dQw4w9WgXcQ&itag=140"
 ```
 
 ## Self-host: engine sul NAS (IP residenziale)
 
-L'engine gira anche come **server Node su un NAS/VPS** con IP residenziale:
-YouTube flagga molto meno gli IP di casa che quelli dei datacenter
-(Cloudflare), quindi i formati audio completi (Opus/AAC) tornano disponibili
-anche quando il worker è in cooldown.
+L'engine gira come **server Node su un NAS/VPS** con IP residenziale:
+YouTube flagga molto meno gli IP di casa che quelli dei datacenter, quindi
+i formati audio completi (Opus/AAC) tornano disponibili anche quando un IP
+datacenter è in cooldown.
 
 Copia il progetto sul NAS (es. `/volume1/Download/yt-downloader`) e avvia:
 
@@ -159,11 +158,9 @@ retry automatico se il volume non è ancora montato).
 
 La pagina usa **solo il NAS** come engine:
 
-1. il NAS registra ogni 60 secondi il suo URL pubblico corrente (`POST
-   /register` sul worker, protetto da chiave) — "si registra sempre e
-   comunque": se il worker c'è, la pagina trova il NAS da sola (`GET
-   /nas`, ricontrollo ogni 5 minuti); se non c'è, nessun problema, si usa
-   l'URL incollato a mano;
+1. il NAS pubblica ogni 60 secondi il suo URL pubblico corrente su GitHub
+   (`nas-url.txt`, solo quando l'URL cambia) — dopo un riavvio la pagina
+   trova il NAS da sola (ricontrollo ogni 5 minuti);
 2. engine disponibili: quello incollato nel footer ("cambia") e il NAS
    scoperto; l'ultimo che ha funzionato viene provato per primo (memoria
    in `localStorage`);
@@ -175,22 +172,13 @@ La pagina usa **solo il NAS** come engine:
 > `trycloudflare.com`. L'IP LAN (`http://192.168.0.108:8787`) funziona
 > solo se apri la pagina via HTTP (es. servendola dal NAS stesso); da
 > GitHub Pages il browser lo blocca. Quando il tunnel cambia URL (a ogni
-> riavvio del NAS), con il worker attivo la pagina si aggiorna da sola,
-> altrimenti incolli il nuovo URL nel footer.
+> riavvio del NAS), il NAS lo pubblica da solo e la pagina si aggiorna
+> entro pochi minuti.
 
-Configurazione (una tantum, sul NAS e sul worker):
+Configurazione (una tantum, sul NAS):
 
 ```bash
-# 1) sul worker: chiave condivisa (una sola volta, opzionale)
-cd worker && openssl rand -hex 24 | npx wrangler secret put NAS_REGISTER_KEY
-
-# 2) sul NAS: stessa chiave + URL del worker in server/.env (non in git)
-cat > server/.env <<EOF
-NAS_REGISTER_KEY=<stessa chiave>
-REGISTER_WORKER=https://xxx.workers.dev
-EOF
-
-# 3) (consigliato) token GitHub: il NAS pubblica il suo URL su GitHub
+# token GitHub: il NAS pubblica il suo URL su GitHub
 #    (nas-url.txt) — la pagina lo legge direttamente dal repo, così
 #    l'indirizzo resta aggiornato anche SENZA worker. Crea un fine-grained
 #    PAT (GitHub → Settings → Developer settings → Fine-grained tokens →
@@ -207,10 +195,9 @@ campo “Engine URL” (in cima, a destra).
 > **Nota**: con il tunnel gratuito `trycloudflare` l'URL cambia a ogni
 > riavvio del tunnel. Dopo un riavvio del NAS: il programma riparte da solo
 > (rc.d `S99ytd.sh` + watchdog) e il NAS **pubblica il nuovo URL su GitHub**
-> (`nas-url.txt`), che la pagina legge istantaneamente (fallback: worker
-> `/nas`). Senza token GitHub e senza worker, va incollato a mano. Per un
-> URL *stabile* serve comunque un tunnel “named” (richiede un account
-> Cloudflare e un dominio).
+> (`nas-url.txt`), che la pagina legge istantaneamente. Senza token GitHub
+> va incollato a mano. Per un URL *stabile* serve comunque un tunnel
+> “named” (richiede un account Cloudflare e un dominio).
 
 ## Sviluppo
 
@@ -374,28 +361,24 @@ bypass the browser cache. **Before every commit** bump the version with:
 bash tools/bump.sh
 ```
 
-## Deploy (optional: NAS discovery only)
+## Deploy
 
 The page **works without Cloudflare**: the engine is the NAS, reached via
-its HTTPS tunnel or a manually pasted URL. The worker only acts as a
-best-effort registry: if it is up, the page finds the current NAS URL by
-itself (it changes on every tunnel restart); if it is gone, you paste the
-URL in the footer (“change”). The NAS keeps registering “always anyway”
-(heartbeat every 60s), so if you ever re-enable the worker everything
-re-configures itself.
+its HTTPS tunnel or a manually pasted URL. The URL registry is GitHub
+(`nas-url.txt`): the NAS publishes its URL on every change (after a reboot
+the tunnel gets a new URL and the NAS publishes it by itself within ~60s)
+and the page reads it instantly. No account, no worker.
 
 ```bash
-cd worker
-npx wrangler login
-npx wrangler deploy            # optional: /nas registry
-npx wrangler deploy --name yt-downloader2   # optional: registry redundancy only
+# on the NAS: only the GitHub token in server/.env (to publish nas-url.txt)
+GITHUB_TOKEN=<fine-grained PAT>
 ```
 
 ## Self-hosting: engine on your NAS (residential IP)
 
-The engine also runs as a **Node server on a NAS/VPS** with a residential
-IP: YouTube flags home IPs much less than datacenter ones (Cloudflare), so
-full audio formats (Opus/AAC) come back even when the worker is in cooldown.
+The engine runs as a **Node server on a NAS/VPS** with a residential IP:
+YouTube flags home IPs much less than datacenter ones, so full audio
+formats (Opus/AAC) come back even when a datacenter IP is in cooldown.
 
 Copy the project to the NAS (e.g. `/volume1/Download/yt-downloader`) and run:
 
@@ -450,10 +433,9 @@ automatic retry if the volume is not mounted yet).
 
 The page uses **only the NAS** as engine:
 
-1. the NAS registers its current public URL every 60 seconds (`POST
-   /register` on the worker, key-protected) — it “always registers anyway”:
-   if the worker is up, the page finds the NAS by itself (`GET /nas`,
-   re-check every 5 minutes); if not, no problem, the pasted URL is used;
+1. the NAS publishes its current public URL to GitHub every 60 seconds
+   (`nas-url.txt`, only when the URL changes) — after a reboot the page
+   finds the NAS by itself (re-check every 5 minutes);
 2. available engines: the one pasted in the footer (“change”) and the
    discovered NAS; the last one that worked is tried first next time
    (remembered in `localStorage`);
@@ -465,27 +447,12 @@ The page uses **only the NAS** as engine:
 > The LAN IP (`http://192.168.0.108:8787`) works only if you open the page
 > over HTTP (e.g. served from the NAS itself); from GitHub Pages the
 > browser blocks it. When the tunnel changes URL (on every NAS restart),
-> with the worker up the page updates by itself, otherwise you paste the
-> new URL in the footer.
+> the NAS publishes it by itself and the page updates within minutes.
 
-One-time setup (on the NAS and the worker):
+One-time setup (on the NAS):
 
 ```bash
-# 1) on the worker: shared key (once)
-cd worker && openssl rand -hex 24 | npx wrangler secret put NAS_REGISTER_KEY
-
-# 2) on the NAS: same key + worker URL in server/.env (not in git)
-cat > server/.env <<EOF
-NAS_REGISTER_KEY=<same key>
-REGISTER_WORKER=https://xxx.workers.dev
-EOF
-
-# 3) (recommended) GitHub token: the NAS publishes its URL to GitHub
-#    (nas-url.txt) — the page reads it straight from the repo, so the
-#    address stays updated even WITHOUT the worker. Create a fine-grained
-#    PAT (GitHub → Settings → Developer settings → Fine-grained tokens →
-#    repo vincenzosco/yt-downloader → Contents: Read and write) and:
-cat >> server/.env <<EOF
+# GitHub token: the NAS publishes its URL to GitHub
 GITHUB_TOKEN=<fine-grained PAT>
 EOF
 ```
@@ -497,10 +464,9 @@ field (top right).
 > **Note**: with the free `trycloudflare` tunnel the URL changes on every
 > tunnel restart. After a NAS reboot: the program restarts by itself
 > (rc.d `S99ytd.sh` + watchdog) and the NAS **publishes the new URL to
-> GitHub** (`nas-url.txt`), which the page reads instantly (fallback: worker
-> `/nas`). Without the GitHub token and without the worker, paste it
-> manually. For a *stable* URL you still need a “named” tunnel (requires a
-> Cloudflare account and a domain).
+> GitHub** (`nas-url.txt`), which the page reads instantly. Without the
+> GitHub token, paste it manually. For a *stable* URL you still need a
+> “named” tunnel (requires a Cloudflare account and a domain).
 
 ### Local tests
 
