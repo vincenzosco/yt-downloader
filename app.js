@@ -292,8 +292,11 @@
 
   /* se l'engine risponde "bloccato, riprova tra Ns" (worker in backoff
      anti-bot), ripete da solo l'intera sequenza di engine dopo N secondi,
-     fino a MAX_AUTO_RETRY volte: l'utente non deve fare nulla. */
-  var MAX_AUTO_RETRY = 3;
+     fino a MAX_AUTO_RETRY volte: l'utente non deve fare nulla. Ogni attesa
+     e' limitata a 90s: anche se il worker consiglia di aspettare di piu',
+     un nuovo tentativo puo' cadere su un'altra istanza del worker non
+     bloccata (il backoff e' in memoria per istanza). */
+  var MAX_AUTO_RETRY = 5;
   function retrySeconds(msg) {
     var m = /^RETRY_AFTER_(\d+)$/.exec(String(msg));
     return m ? parseInt(m[1], 10) : 0;
@@ -330,15 +333,16 @@
             idx = 0;
             lastErr = null;
             lastEngine = '';
-            if (onRetry) onRetry(rs);
-            setTimeout(next, rs * 1000);
+            var wait = Math.min(rs, 90) + 2;
+            if (onRetry) onRetry(wait);
+            setTimeout(next, wait * 1000);
             return;
           }
           lastErr = msg;
           lastEngine = engine;
           if (shouldRetry(msg)) next(); else err(friendlyMsg(msg) + ' (' + engineLabel(engine) + ')');
         },
-        maxAttempts || 3, 1500);
+        maxAttempts || 6, 1500);
     })();
   }
 
@@ -363,14 +367,15 @@
             autoLeft--;
             idx = 0;
             lastErr = null;
-            if (onRetry) onRetry(rs);
-            setTimeout(next, rs * 1000);
+            var wait = Math.min(rs, 90) + 2;
+            if (onRetry) onRetry(wait);
+            setTimeout(next, wait * 1000);
             return;
           }
           lastErr = msg;
           if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
         },
-        maxAttempts || 3, 1500);
+        maxAttempts || 6, 1500);
     })();
   }
 
@@ -408,7 +413,7 @@
   }
 
   function fetchFormats(id, ok, err, onRetry) {
-    callEngine('/formats?id=' + encodeURIComponent(id), ok, err, 3, onRetry);
+    callEngine('/formats?id=' + encodeURIComponent(id), ok, err, 6, onRetry);
   }
 
   function xhrBlob(url, ok, err, onProgress) {
@@ -704,16 +709,21 @@
     return /bot|sign in|blocked|bloccato|blocco|rifiutato|403|429|500|502|503|network error|errore di rete|invalid response/i.test(String(msg));
   }
 
-  /* esegue exec(ok, err) con retry: l'anti-bot di YouTube e' intermittente,
-     un nuovo tentativo ha buona probabilita' di passare (visitorData fresco). */
+  /* esegue exec(ok, err) con retry aggressivo e backoff esponenziale:
+     l'anti-bot di YouTube e' intermittente, un nuovo tentativo ha buona
+     probabilita' di passare (visitorData fresco, altra istanza del worker). */
   function retryCall(exec, onOk, onErr, maxAttempts, delayMs) {
     var attempts = 0;
     (function go() {
       attempts++;
       exec(function (val) { onOk(val); },
         function (msg) {
-          if (attempts < maxAttempts && shouldRetry(msg)) { setTimeout(go, delayMs); }
-          else { onErr(msg); }
+          /* "bloccato, riprova tra Ns": non consumare tentativi con attese
+             corte inutili; il chiamante (auto-retry) aspetta l'attesa giusta */
+          if (retrySeconds(msg)) { onErr(msg); return; }
+          if (attempts < maxAttempts && shouldRetry(msg)) {
+            setTimeout(go, Math.min(delayMs * Math.pow(2, attempts - 1), 20000));
+          } else { onErr(msg); }
         });
     })();
   }

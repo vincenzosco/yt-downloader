@@ -245,7 +245,11 @@ cd worker && node proxy-test.mjs
 - **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
   il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
   a ogni blocco) risponde subito `{ retryAfter }`; il frontend mostra un
-  countdown e **riprova da solo** fino a 3 volte (nessuna azione richiesta).
+  countdown e **riprova da solo** (nessuna azione richiesta): fino a 5 cicli
+  completi, ognuno con attesa limitata a 90s — ogni tentativo può cadere su
+  un'altra istanza del worker non bloccata (il backoff è in memoria per
+  istanza). Anche il singolo engine viene ritentato fino a 6 volte con
+  backoff esponenziale (1.5s → 20s) prima di passare al successivo.
 - **Stream leggero**: `/stream` non rifà le chiamate pesanti a YouTube:
   riusa i formati già cachati da `/formats` (stesso IP del worker, gli URL
   googlevideo restano validi) e scarica direttamente l'URL. Se l'URL cachato
@@ -487,7 +491,11 @@ cd worker && node proxy-test.mjs
 - **Anti-bot backoff**: when all routes fail with `LOGIN_REQUIRED`, the
   worker stops hammering YouTube and for a while (90s → 10min, doubling each
   block) answers immediately with `{ retryAfter }`; the frontend shows a
-  countdown and **retries automatically** up to 3 times (no user action).
+  countdown and **retries automatically** (no user action): up to 5 full
+  cycles, each wait capped at 90s — every attempt may land on a different,
+  unblocked worker instance (backoff is per-instance in memory). A single
+  engine is also retried up to 6 times with exponential backoff
+  (1.5s → 20s) before falling through to the next one.
 - **Light stream**: `/stream` does not redo the heavy YouTube calls: it
   reuses the formats already cached by `/formats` (same worker IP, so
   googlevideo URLs stay valid) and downloads the URL directly. If the cached
