@@ -39,8 +39,9 @@ browser (pagina statica su GitHub Pages)
    │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
    │  chiamate all'engine (CORS *)
    ▼
-engine: Cloudflare Worker (gratis) o NAS self-host (IP residenziale,
-   scoperto automaticamente via /nas: engine custom → NAS → worker)
+engine: 2 Cloudflare Worker ridondanti (gratis) o NAS self-host (IP
+   residenziale, scoperto automaticamente via /nas; la pagina prova
+   custom → NAS → worker 1 → worker 2, ultimo-funzionante per primo)
    │  API Innertube lato server, senza Origin, retry su più host/client
    │  PO token (anti-bot) generato dentro l'engine
    ▼
@@ -82,6 +83,16 @@ cd worker
 npx wrangler login
 npx wrangler deploy
 ```
+
+**Ridondanza (consigliata)**: per un secondo worker con IP di uscita
+indipendenti (se YouTube flagga l'IP di uno, l'altro passa):
+
+```bash
+npx wrangler deploy --name yt-downloader2
+```
+
+La pagina lo usa automaticamente come ultimo engine di riserva; il secondo
+worker ha backoff e cache indipendenti (in memoria, per istanza).
 
 Test rapido:
 
@@ -156,9 +167,11 @@ La pagina **usa il NAS da sola**, senza incollare nulla:
    sempre dove raggiungerlo, anche quando il tunnel cambia URL;
 2. all'avvio la pagina chiede al worker `GET /nas` e, se c'è un NAS
    registrato, lo mette **in cima** agli engine (ordine: engine custom →
-   NAS → worker Cloudflare), con ricontrollo ogni 5 minuti;
-3. se il NAS non risponde, la pagina **ripiega automaticamente sul worker**
-   (nessun errore per l'utente).
+   NAS → worker 1 → worker 2), con ricontrollo ogni 5 minuti;
+3. se un engine non risponde (o è in backoff anti-bot), la pagina **passa
+   subito al successivo** senza attendere — aspetta solo se sono bloccati
+   tutti; l'ultimo engine che ha funzionato viene provato per primo la
+   volta dopo (memoria in `localStorage`).
 
 Configurazione (una tantum, sul NAS e sul worker):
 
@@ -244,10 +257,11 @@ cd worker && node proxy-test.mjs
   evitato: YouTube lo ha rotto il 17/08/2026 (403 su tutti i formati).
 - **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
   il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
-  a ogni blocco) risponde subito `{ retryAfter }`; il frontend mostra un
-  countdown e **riprova da solo** (nessuna azione richiesta): fino a 5 cicli
-  completi, ognuno con attesa limitata a 90s — ogni tentativo può cadere su
-  un'altra istanza del worker non bloccata (il backoff è in memoria per
+  a ogni blocco) risponde subito `{ retryAfter }`; il frontend **non aspetta
+  subito**: quando un engine è in backoff passa subito agli altri (NAS,
+  worker 2 — potrebbero non essere bloccati) e aspetta solo se sono bloccati
+  tutti: fino a 5 cicli, ognuno con attesa limitata a 90s. Ogni tentativo
+  può cadere su un'istanza del worker non bloccata (backoff in memoria per
   istanza). Anche il singolo engine viene ritentato fino a 6 volte con
   backoff esponenziale (1.5s → 20s) prima di passare al successivo.
 - **Stream leggero**: `/stream` non rifà le chiamate pesanti a YouTube:
@@ -354,6 +368,16 @@ npx wrangler login
 npx wrangler deploy
 ```
 
+**Redundancy (recommended)**: a second worker with independent egress IPs
+(if YouTube flags one IP, the other still works):
+
+```bash
+npx wrangler deploy --name yt-downloader2
+```
+
+The page uses it automatically as the last fallback engine; it has
+independent in-memory backoff and cache.
+
 ## Self-hosting: engine on your NAS (residential IP)
 
 The engine also runs as a **Node server on a NAS/VPS** with a residential
@@ -418,9 +442,11 @@ The page **uses the NAS by itself**, nothing to paste:
    where to reach it, even when the tunnel URL changes;
 2. on load the page asks the worker `GET /nas` and, if a NAS is
    registered, puts it **on top** of the engine list (order: custom engine →
-   NAS → Cloudflare worker), re-checking every 5 minutes;
-3. if the NAS does not answer, the page **automatically falls back to the
-   worker** (no user-facing error).
+   NAS → worker 1 → worker 2), re-checking every 5 minutes;
+3. if an engine does not answer (or is in anti-bot backoff), the page
+   **moves on to the next one immediately** — it only waits when all are
+   blocked; the last engine that worked is tried first next time
+   (remembered in `localStorage`).
 
 One-time setup (on the NAS and the worker):
 
@@ -490,11 +516,12 @@ cd worker && node proxy-test.mjs
   (never more than one at a time — bursts trigger the flag).
 - **Anti-bot backoff**: when all routes fail with `LOGIN_REQUIRED`, the
   worker stops hammering YouTube and for a while (90s → 10min, doubling each
-  block) answers immediately with `{ retryAfter }`; the frontend shows a
-  countdown and **retries automatically** (no user action): up to 5 full
-  cycles, each wait capped at 90s — every attempt may land on a different,
-  unblocked worker instance (backoff is per-instance in memory). A single
-  engine is also retried up to 6 times with exponential backoff
+  block) answers immediately with `{ retryAfter }`; the frontend **does not
+  wait right away**: when one engine is in backoff it moves on to the others
+  (NAS, worker 2 — they may not be blocked) and only waits when all are:
+  up to 5 cycles, each wait capped at 90s. Every attempt may land on a
+  different, unblocked worker instance (backoff is per-instance in memory).
+  A single engine is also retried up to 6 times with exponential backoff
   (1.5s → 20s) before falling through to the next one.
 - **Light stream**: `/stream` does not redo the heavy YouTube calls: it
   reuses the formats already cached by `/formats` (same worker IP, so

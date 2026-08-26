@@ -6,7 +6,9 @@
      l'utente puo' cambiarlo dal footer ("cambia"). */
 
   var ENGINE_CLOUDFLARE = 'https://yt-downloader.scopacasa-vincenzo432.workers.dev';
+  var ENGINE_CLOUDFLARE2 = 'https://yt-downloader2.scopacasa-vincenzo432.workers.dev';
   var ENGINE_KEY = 'ytd.engine';
+  var LAST_GOOD_KEY = 'ytd.lastGood';
 
   function engineMissingMsg() { return t('engine-missing'); }
 
@@ -255,24 +257,33 @@
     if (nasChecking) return;
     if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
     nasChecking = true;
-    var x = new XMLHttpRequest();
-    x.open('GET', ENGINE_CLOUDFLARE + '/nas?t=' + Date.now(), true);
-    x.timeout = 8000;
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      nasChecking = false;
-      nasChecked = Date.now();
-      if (x.status >= 200 && x.status < 300) {
-        try {
-          var d = JSON.parse(x.responseText);
-          if (d && d.url) nasUrl = d.url;
-          else nasUrl = null;
-        } catch (e) { nasUrl = null; }
-        if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
-      }
-    };
-    x.onerror = function () { nasChecking = false; nasChecked = Date.now(); };
-    x.send();
+    nasChecked = Date.now();
+    /* chiede prima a worker1; se non risponde prova worker2 (ridondanza) */
+    var tried = 0;
+    var urls = [ENGINE_CLOUDFLARE, ENGINE_CLOUDFLARE2];
+    (function one() {
+      if (tried >= urls.length) { nasChecking = false; return; }
+      var base = urls[tried++];
+      var x = new XMLHttpRequest();
+      x.open('GET', base + '/nas?t=' + Date.now(), true);
+      x.timeout = 8000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        if (x.status >= 200 && x.status < 300) {
+          try {
+            var d = JSON.parse(x.responseText);
+            nasUrl = (d && d.url) ? d.url : null;
+          } catch (e) { nasUrl = null; }
+          nasChecking = false;
+          if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
+          return;
+        }
+        one();
+      };
+      x.onerror = function () { one(); };
+      x.ontimeout = function () { one(); };
+      x.send();
+    })();
   }
 
   function engines() {
@@ -287,6 +298,19 @@
     }
     if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
     if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
+    if (list.indexOf(ENGINE_CLOUDFLARE2) === -1) list.push(ENGINE_CLOUDFLARE2);
+    /* l'ultimo engine che ha funzionato va provato per primo: converge
+       sull'engine sano e non spreca tentativi su quello giù */
+    var good = storageGet(LAST_GOOD_KEY);
+    if (good) {
+      for (var i = 1; i < list.length; i++) {
+        if (list[i] === good) {
+          list.splice(i, 1);
+          list.unshift(good);
+          break;
+        }
+      }
+    }
     return list;
   }
 
@@ -306,7 +330,7 @@
   function engineLabel(u) {
     if (!u) return '?';
     if (u.indexOf('trycloudflare.com') !== -1) return 'NAS';
-    if (u.indexOf('workers.dev') !== -1) return 'worker';
+    if (u.indexOf('workers.dev') !== -1) return (u === ENGINE_CLOUDFLARE2) ? 'worker 2' : 'worker';
     return u.replace(/^https?:\/\//, '').split('/')[0].split('.')[0] || 'engine';
   }
 
@@ -317,25 +341,42 @@
     var lastErr = null;
     var lastEngine = '';
     var autoLeft = MAX_AUTO_RETRY;
+    var pendingWait = 0;
     (function next() {
       if (idx >= list.length) {
+        /* tutti gli engine hanno fallito: se qualcuno era in backoff
+           anti-bot, aspetta l'attesa piu' lunga e ricomincia da capo
+           (fino a MAX_AUTO_RETRY volte); altrimenti errore finale */
+        if (pendingWait > 0 && autoLeft > 0) {
+          autoLeft--;
+          var w = pendingWait;
+          pendingWait = 0;
+          idx = 0;
+          lastErr = null;
+          lastEngine = '';
+          if (onRetry) onRetry(w);
+          setTimeout(next, w * 1000);
+          return;
+        }
         err(lastErr ? friendlyMsg(lastErr) + ' (' + engineLabel(lastEngine) + ')' : 'all engines failed');
         return;
       }
       var engine = list[idx++];
       retryCall(
         function (o, e) { xhrJson(engine + pathQuery, o, e); },
-        function (val) { ok(val); },
+        function (val) {
+          storageSet(LAST_GOOD_KEY, engine);
+          ok(val);
+        },
         function (msg) {
           var rs = retrySeconds(msg);
-          if (rs && autoLeft > 0) {
-            autoLeft--;
-            idx = 0;
-            lastErr = null;
-            lastEngine = '';
-            var wait = Math.min(rs, 90) + 2;
-            if (onRetry) onRetry(wait);
-            setTimeout(next, wait * 1000);
+          if (rs) {
+            /* engine in backoff: ricorda l'attesa e prova subito il
+               prossimo engine (NAS/worker 2 potrebbero non essere bloccati) */
+            pendingWait = Math.max(pendingWait, Math.min(rs, 90) + 2);
+            lastErr = msg;
+            lastEngine = engine;
+            next();
             return;
           }
           lastErr = msg;
@@ -352,24 +393,35 @@
     var idx = 0;
     var lastErr = null;
     var autoLeft = MAX_AUTO_RETRY;
+    var pendingWait = 0;
     (function next() {
       if (idx >= list.length) {
+        if (pendingWait > 0 && autoLeft > 0) {
+          autoLeft--;
+          var w = pendingWait;
+          pendingWait = 0;
+          idx = 0;
+          lastErr = null;
+          if (onRetry) onRetry(w);
+          setTimeout(next, w * 1000);
+          return;
+        }
         err((lastErr === 'interrotto') ? 'interrotto' : (lastErr ? friendlyMsg(lastErr) : 'all engines failed'));
         return;
       }
       var engine = list[idx++];
       retryCall(
         function (o, e) { xhrBlob(engine + pathQuery, o, e, onProgress); },
-        ok,
+        function (val) {
+          storageSet(LAST_GOOD_KEY, engine);
+          ok(val);
+        },
         function (msg) {
           var rs = retrySeconds(msg);
-          if (rs && autoLeft > 0) {
-            autoLeft--;
-            idx = 0;
-            lastErr = null;
-            var wait = Math.min(rs, 90) + 2;
-            if (onRetry) onRetry(wait);
-            setTimeout(next, wait * 1000);
+          if (rs) {
+            pendingWait = Math.max(pendingWait, Math.min(rs, 90) + 2);
+            lastErr = msg;
+            next();
             return;
           }
           lastErr = msg;
