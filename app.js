@@ -245,14 +245,36 @@
      la pagina riprova da sola con attese crescenti (retryCall) e alla fine
      mostra un messaggio chiaro. */
 
+  /* Pool di istanze pubbliche di Piped, ordinate con le più vicine/affidabili
+     in cima. Le istanze pubbliche nascono e muoiono spesso (anti-bot di
+     YouTube), quindi il pool è volutamente ampio: il health check scarta le
+     morte e la pagina usa la prima che risponde davvero. Aggiungi qui una
+     nuova istanza o un candidato per ampliare la rete. */
   var PIPED_POOL = [
     'https://api.piped.private.coffee',
+    'https://pipedapi.orangenet.cc',
+    'https://api.piped.projectsegfau.lt',
     'https://pipedapi.adminforge.de',
     'https://pipedapi.drgns.space',
     'https://pipedapi.ducks.party',
-    'https://api.piped.yt'
+    'https://api.piped.yt',
+    'https://pipedapi.leptons.xyz',
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.reallyaweso.me',
+    'https://piped-api.codespace.cz',
+    'https://pipedapi.darkness.services',
+    'https://pipedapi.nosebs.ru',
+    'https://pipedapi-libre.kavin.rocks',
+    'https://piped-api.privacy.com.de',
+    'https://api.piped.shynek.de',
+    'https://piped-api.owo.si',
+    'https://pipedapi.mha.fi'
   ];
-  var PIPED_TTL = 5 * 60 * 1000;  /* ricontrolla le istanze ogni 5 min */
+  /* Istanza di ultima risorsa: se il health check scarta tutto, prova questa
+     comunque sulla search reale (alcune istanze mentono sull'healthcheck o
+     rispondono solo su certi endpoint). */
+  var PIPED_FALLBACK = 'https://api.piped.private.coffee';
+  var PIPED_TTL = 4 * 60 * 1000;  /* ricontrolla le istanze ogni 4 min */
   var PIPED_KEY = 'ytd.piped';
   var pipedBase = '';
   var pipedChecked = 0;
@@ -274,7 +296,7 @@
   function pipedProbe(base, cb) {
     var x = new XMLHttpRequest();
     x.open('GET', base + '/healthcheck', true);
-    x.timeout = 6000;
+    x.timeout = 9000;
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
       /* 2xx/3xx = viva (3xx: redirect; l'API vera la verifica la richiesta) */
@@ -308,7 +330,10 @@
           if (pending === 0) {
             pipedChecking = false;
             pipedChecked = Date.now();
-            pipedBase = alive.length ? alive[0] : '';
+            /* se il health check non trova nulla, ripiega sull'istanza nota
+               (ultima risorsa): alcune istanze mentono o rispondono solo su
+               certe rotte, meglio provare che dichiarare tutto morto */
+            pipedBase = alive.length ? alive[0] : PIPED_FALLBACK;
             if (pipedBase) pipedSave(pipedBase);
             if (typeof window.__ytdOnPiped === 'function') window.__ytdOnPiped(pipedBase);
             if (cb) cb(pipedBase);
@@ -318,12 +343,20 @@
     }
   }
 
-  /* istanza viva non ancora provata in questo giro, altrimenti '' */
+  /* istanza viva non ancora provata in questo giro; se il health check non
+     trova nulla, usa l'istanza di fallback (così si tenta sempre almeno una
+     rotta prima di dire "nessuna api"). */
   function ensureBase(tried, cb) {
+    var skip = function (u) { return u && (!tried || tried.indexOf(u) === -1); };
     pipedRefresh(false, function (base) {
-      if (base && (!tried || tried.indexOf(base) === -1)) { cb(base); return; }
+      if (skip(base)) { cb(base); return; }
       pipedRefresh(true, function (base2) {
-        if (base2 && (!tried || tried.indexOf(base2) === -1)) { cb(base2); return; }
+        if (skip(base2)) { cb(base2); return; }
+        /* ultima risorsa: prova il fallback, anche se non ha passato il check */
+        if (skip(PIPED_FALLBACK)) { cb(PIPED_FALLBACK); return; }
+        /* l'ultima istanza che ha funzionato (memoria) come disperata */
+        var cached = pipedLoadCache();
+        if (skip(cached)) { cb(cached); return; }
         cb('');
       });
     });
@@ -360,11 +393,20 @@
   }
 
   function pipedGet(path, ok, err, maxAttempts) {
-    var maxA = maxAttempts || 4;
+    var maxA = maxAttempts || 5;
     var tried = [];
+    var rounds = 0;
     (function go() {
       ensureBase(tried, function (base) {
-        if (!base) { err(t('piped-none')); return; }
+        if (!base) {
+          /* nessuna istanza viva: prima di arrenderti, ripeti un altro giro
+             (in rete le cose cambiano in pochi secondi) e poi solo se ancora
+             nulla dichiara "nessuna api" */
+          rounds++;
+          if (rounds < 2) { setTimeout(go, 1500); return; }
+          err(t('piped-none'));
+          return;
+        }
         tried.push(base);
         xhrPipedJson(base + path,
           function (data) { ok(data); },
@@ -372,7 +414,7 @@
             /* istanza giù o bloccata: riprova (un'altra istanza può essere
                viva, o YouTube può aver sbloccato) con attesa crescente */
             if (tried.length < maxA && shouldRetry(msg)) {
-              setTimeout(go, 1000 * tried.length);
+              setTimeout(go, 1200 * tried.length);
             } else {
               err(msg);
             }
