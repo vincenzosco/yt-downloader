@@ -15,6 +15,10 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
   video (720p–1080p+). Ogni opzione mostra la dimensione stimata.
 - **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce, con qualità audio
   scelta (AAC consigliato / Opus migliore / leggero).
+- **Selezione multipla → .zip** — spunta le canzoni con le checkbox (da una o
+  più ricerche, la selezione resta mentre cerchi altro) e scarica tutto in un
+  unico `ytd-AAAA-MM-GG.zip`: download in sequenza con progress, nomi file dal
+  titolo con estensione giusta, le canzoni che falliscono non bloccano il lotto.
 - **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
 - **Scarica sempre disponibile** — il pulsante Download compare subito, anche
   se il dettaglio video (`/info`) è temporaneamente bloccato da YouTube;
@@ -289,6 +293,13 @@ cd worker && node proxy-test.mjs
   `thirdParty.embedUrl`), which needs **no PO token at all** and guarantees
   a downloadable 360p progressive (itag 18). `android_vr` is avoided:
   YouTube broke it on 2026-08-17 (403 on all formats).
+- **Multi-select → .zip**: tick songs with the checkboxes (from one or more
+  searches — the selection stays while you search more) and download them all
+  as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
+  filenames from the title with the right extension, failed songs don't stop
+  the batch. The zip is built in the browser in plain ES5 (store method — the
+  audio is already compressed, so there is nothing to gain from recompressing;
+  a few dozen songs are fine, very large batches need enough RAM).
 - **Real limit**: heavy continued use still triggers blocks on the worker IP
   (PO token is not 100%). It resets on its own in minutes/hours. Normal use
   (a few songs) is fine. For heavy use you'd need an extra provider or a

@@ -888,6 +888,7 @@
     zipBtn.textContent = '0/' + selOrder.length;
     var items = selOrder.map(function (id) { return selMap[id]; });
     var failures = 0;
+    var lastMsg = null;
     var zip = new ZipBuilder();
     var i = 0;
     (function next() {
@@ -898,7 +899,7 @@
           saveBlob(zip.build(), zipName, null);
           setSelStatus(tF('zip-done', done) + (failures ? tF('zip-some-failed', failures) : ''));
         } else {
-          setSelStatus(tF('zip-err', t('zip-unavailable')), true);
+          setSelStatus(tF('zip-err', lastMsg || t('zip-unavailable')), true);
         }
         zipBtn.removeAttribute('data-busy');
         removeClass(zipBtn, 'is-busy');
@@ -912,7 +913,7 @@
       setSelStatus(tF('zip-progress', i + 1, items.length, item.title));
       fetchZipItem(item,
         function (name, bytes) { zip.add(name, bytes); i++; next(); },
-        function () { failures++; i++; next(); });
+        function (msg) { lastMsg = msg; failures++; i++; next(); });
     })();
   }
 
