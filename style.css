@@ -199,6 +199,26 @@ a:hover { color: #e00000; }
 .card .card-preview { margin-top: 14px; }
 .card .card-preview audio { width: 100%; }
 
+/* ---------- banner aggiornamento ---------- */
+
+.up-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #141414;
+  color: #fff;
+  font-size: 13px;
+}
+.up-banner .btn { background: #fff; color: #141414; border-color: #fff; padding: 4px 12px; font-size: 12px; }
+.up-banner .btn:hover { background: #e00000; border-color: #e00000; color: #fff; }
+
 /* ---------- barra di progresso ---------- */
 
 .progress {

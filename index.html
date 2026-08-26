@@ -7,7 +7,8 @@
 <title data-i18n="title">ytd. — YouTube downloader</title>
 <meta name="description" content="Search a song on YouTube or paste a link (video or playlist): preview title & cover, download audio.">
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css">
+<script>window.YTD_VERSION = "e14b5de";</script>
+<link rel="stylesheet" href="style.css?v=e14b5de">
 </head>
 <body>
 
@@ -70,10 +71,11 @@
     <p class="foot-line"><span data-i18n="engine-label">engine:</span> <span class="mono" id="engine-url">not configured</span>
       <button type="button" class="linklike" id="engine-change" data-i18n="engine-change">change</button></p>
     <p class="foot-line"><a href="https://github.com/vincenzosco/yt-downloader" target="_blank" rel="noopener">github.com/vincenzosco/yt-downloader</a>
-      — <span data-i18n="disclaimer">only for content you have rights to.</span></p>
+      — <span data-i18n="disclaimer">only for content you have rights to.</span>
+      — <span class="mono" id="ft-version"></span></p>
   </div>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=e14b5de"></script>
 </body>
 </html>

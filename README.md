@@ -57,6 +57,19 @@ YouTube → URL audio/video → l'engine lo streama al browser → download
 | `/stream?id=…&itag=…` | stream del file (CORS, Range), itag opzionale |
 | `/proxies`             | check di salute delle 5 liste proxy pubbliche |
 
+## Auto-update della pagina
+
+La pagina mostra **subito le nuove versioni**: `app.js` confronta
+`window.YTD_VERSION` (scritto in `index.html`) con `version.txt` e, quando
+cambiano, si ricarica da sola (se c'è un download in corso mostra un banner
+“Ricarica” invece di interromperlo). I nomi delle risorse portano `?v=…` per
+bypassare la cache del browser. **Prima di ogni commit** aggiorna la versione
+con:
+
+```bash
+bash tools/bump.sh
+```
+
 ## Deploy
 
 Servono solo l'account Cloudflare già in uso (unico account per tutto).
@@ -215,6 +228,18 @@ own anti-bot PO token (`worker/pot.js`) inside the worker.
 | `/playlist?list=…` | playlist track list                              |
 | `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
 | `/proxies`             | health check of the 5 public proxy lists     |
+
+## Auto-update
+
+The page shows **new versions immediately**: `app.js` compares
+`window.YTD_VERSION` (written into `index.html`) with `version.txt` and,
+when they differ, reloads itself (if a download is in progress it shows a
+“Reload” banner instead of interrupting it). Asset names carry `?v=…` to
+bypass the browser cache. **Before every commit** bump the version with:
+
+```bash
+bash tools/bump.sh
+```
 
 ## Deploy
 

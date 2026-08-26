@@ -71,7 +71,9 @@
       'zip-done': 'Zip salvato ({0} file)',
       'zip-err': 'zip: {0}',
       'zip-unavailable': 'stream non disponibile',
-      'zip-some-failed': ' ({0} non riuscite)'
+      'zip-some-failed': ' ({0} non riuscite)',
+      'up-available': 'Nuova versione disponibile (v{0}).',
+      'up-reload': 'Ricarica'
     },
     en: {
       'title': 'ytd. — YouTube downloader',
@@ -131,7 +133,9 @@
       'zip-done': 'Zip saved ({0} files)',
       'zip-err': 'zip: {0}',
       'zip-unavailable': 'stream unavailable',
-      'zip-some-failed': ' ({0} failed)'
+      'zip-some-failed': ' ({0} failed)',
+      'up-available': 'New version available (v{0}).',
+      'up-reload': 'Reload'
     }
   };
 
@@ -1189,6 +1193,7 @@
     btn.addEventListener('click', function () {
       if (busy) return;
       busy = true;
+      btn.setAttribute('data-busy', '1');
       var itag = null, ext = 'm4a';
       if (qsel) {
         var opt = qsel.options[qsel.selectedIndex];
@@ -1202,7 +1207,7 @@
         if (i >= items.length) {
           setBar(bar.el, 1);
           btn.textContent = t('done');
-          setTimeout(function () { bar.done(); btn.textContent = t('download-all'); busy = false; }, 2500);
+          setTimeout(function () { bar.done(); btn.removeAttribute('data-busy'); btn.textContent = t('download-all'); busy = false; }, 2500);
           return;
         }
         var item = items[i];
@@ -1237,6 +1242,68 @@
     });
   }
 
+  /* ---------- auto-update ---------- */
+
+  // Quando il repo viene aggiornato (nuove funzioni/componenti), la pagina
+  // si ricarica da sola per mostrare subito la versione nuova: il browser e
+  // GitHub Pages fanno cache, quindi la versione e' scritta nei nomi delle
+  // risorse (?v=...) e in version.txt. Se c'e' un download in corso, invece
+  // di ricaricare mostra un banner "Ricarica" (cliccabile) per non perdere
+  // il lavoro.
+  var YTD_VER = (typeof window.YTD_VERSION === 'string' && window.YTD_VERSION && window.YTD_VERSION !== 'bootstrap')
+    ? window.YTD_VERSION : null;
+  var upBanner = null;
+
+  function xhrText(url, ok) {
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (x.status >= 200 && x.status < 300) ok(x.responseText || '');
+    };
+    x.onerror = function () { /* ignora: offline o Pages down */ };
+    x.send();
+  }
+
+  function anyDownloadBusy() {
+    var els = document.querySelectorAll('[data-busy="1"]');
+    return els.length > 0;
+  }
+
+  function showUpdateBanner(v) {
+    if (upBanner) return;
+    upBanner = document.createElement('div');
+    upBanner.className = 'up-banner';
+    var txt = document.createElement('span');
+    txt.textContent = tF('up-available', v);
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn';
+    btn.textContent = t('up-reload');
+    btn.addEventListener('click', function () { location.reload(); });
+    upBanner.appendChild(txt);
+    upBanner.appendChild(btn);
+    document.body.appendChild(upBanner);
+  }
+
+  function checkVersion() {
+    if (!YTD_VER) return; // placeholder non sostituito da tools/bump.sh: nessuna auto-update
+    xhrText('version.txt?t=' + Date.now(), function (txt) {
+      var v = String(txt || '').replace(/^\s+|\s+$/g, '');
+      if (!v || v === YTD_VER) return; // tutto aggiornato
+      if (anyDownloadBusy()) { showUpdateBanner(v); return; }
+      location.reload();
+    });
+  }
+
+  function renderVersion() {
+    var el = $('ft-version');
+    if (el && YTD_VER) el.textContent = 'v' + YTD_VER;
+  }
+
+  /* hook minimo per test/debug */
+  window.__ytdAutoUpdate = { checkVersion: checkVersion, busy: anyDownloadBusy, version: YTD_VER };
+
   /* ---------- init ---------- */
 
   function init() {
@@ -1246,6 +1313,9 @@
     renderEngineUrl();
     bindEngineChange();
     bindSelTray();
+    renderVersion();
+    setTimeout(checkVersion, 4000);
+    setInterval(checkVersion, 60000);
 
     $('search-form').addEventListener('submit', function (ev) {
       ev.preventDefault();
