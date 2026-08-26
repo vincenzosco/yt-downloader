@@ -35,13 +35,28 @@ const REGISTER_WORKER = (process.env.REGISTER_WORKER || '').replace(/\/+$/, '');
 const REGISTER_KEY = process.env.NAS_REGISTER_KEY || '';
 
 function tunnelUrlFromLog() {
-  try {
-    const log = fs.readFileSync(path.join(__dirname, '..', 'server.log.cloudflared'), 'utf8');
-    // il log accumula gli URL delle sessioni passate: serve l'ULTIMO
-    const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
-    if (m && m.length) return m[m.length - 1];
-  } catch (_e) { /* log non ancora presente */ }
-  return null;
+  // con screen il log è server.log.cloudflared.screen; prima era
+  // server.log.cloudflared. Legge entrambi e prende l'URL più recente
+  // in assoluto: per ogni file l'ultimo match, poi sceglie quello del
+  // file modificato più di recente.
+  const files = [
+    path.join(__dirname, '..', 'server.log.cloudflared.screen'),
+    path.join(__dirname, '..', 'server.log.cloudflared'),
+  ];
+  let best = null;
+  let bestTime = -1;
+  for (const f of files) {
+    try {
+      const st = fs.statSync(f);
+      const log = fs.readFileSync(f, 'utf8');
+      const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
+      if (m && m.length && st.mtimeMs > bestTime) {
+        best = m[m.length - 1];
+        bestTime = st.mtimeMs;
+      }
+    } catch (_e) { /* file non ancora presente */ }
+  }
+  return best;
 }
 
 let lastRegisteredUrl = null;
@@ -97,15 +112,8 @@ const server = http.createServer(async (req, res) => {
 
     // endpoint locale: URL pubblico corrente del tunnel (leggi dal log cloudflared)
     if (url.pathname === '/tunnel-url') {
-      const logFile = path.join(__dirname, '..', 'server.log.cloudflared');
-      let tunnelUrl = null;
-      try {
-        const log = await import('node:fs/promises').then((fs) => fs.readFile(logFile, 'utf8'));
-        const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
-        if (m && m.length) tunnelUrl = m[m.length - 1];
-      } catch (_e) { /* log non ancora presente */ }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ tunnelUrl, local: 'http://' + host }));
+      res.end(JSON.stringify({ tunnelUrl: tunnelUrlFromLog(), local: 'http://' + host }));
       return;
     }
 

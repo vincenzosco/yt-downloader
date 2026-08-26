@@ -121,6 +121,10 @@ Le sessioni screen sopravvivono alla chiusura della SSH (più robuste di
 agganciarsi, `Ctrl-a d` per staccarsi; `SCREENDIR=<dir>/.screen` serve se la
 home utente non esiste (tipico di Synology).
 
+C'è anche una terza sessione screen, **watchdog**: ogni 60 secondi richiama
+`server/start.sh` (idempotente), quindi se l'engine o il tunnel muoiono a
+runtime vengono **riavviati da soli** in meno di un minuto.
+
 Per ritrovare l'URL pubblico in qualsiasi momento (cambia a ogni riavvio del
 tunnel):
 
@@ -139,7 +143,9 @@ sudo /usr/local/etc/rc.d/S99ytd.sh start   # avvia engine + tunnel
 sudo /usr/local/etc/rc.d/S99ytd.sh stop    # li ferma
 ```
 
-Al riavvio del NAS l'engine e il tunnel ripartono da soli.
+Al riavvio del NAS l'engine, il tunnel e il watchdog ripartono da soli
+(`S99` = eseguito tra gli ultimi al boot, quando la rete è pronta; con
+retry automatico se il volume non è ancora montato).
 
 ### Usare il NAS come engine nella pagina (automatico)
 
@@ -373,6 +379,10 @@ The screen sessions survive SSH disconnects (more robust than
 attach, `Ctrl-a d` to detach; `SCREENDIR=<dir>/.screen` is needed when the
 user home does not exist (typical on Synology).
 
+There is also a third screen session, **watchdog**: every 60 seconds it
+re-runs `server/start.sh` (idempotent), so if the engine or the tunnel die
+at runtime they are **restarted by themselves** in under a minute.
+
 To find the current public URL at any time (it changes on every tunnel
 restart):
 
@@ -391,7 +401,9 @@ sudo /usr/local/etc/rc.d/S99ytd.sh start   # starts engine + tunnel
 sudo /usr/local/etc/rc.d/S99ytd.sh stop    # stops both
 ```
 
-After a NAS reboot the engine and the tunnel start on their own.
+After a NAS reboot the engine, the tunnel and the watchdog start on their
+own (`S99` = run among the last at boot, when the network is ready; with
+automatic retry if the volume is not mounted yet).
 
 ### Using the NAS as engine in the page (automatic)
 

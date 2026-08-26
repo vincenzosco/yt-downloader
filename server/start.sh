@@ -39,6 +39,13 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 
+# 0) watchdog: se engine o tunnel muoiono a runtime, li riavvia da solo
+if ! screen_in "\.watchdog\b"; then
+  SCREENDIR="$SCREENDIR" "$SCREEN" -dmS watchdog -L -Logfile "$LOG.watchdog.screen" \
+    sh "$DIR/server/watchdog.sh"
+  echo "watchdog avviato (screen watchdog)"
+fi
+
 # 1) engine node in sessione screen staccata (sopravvive alla SSH)
 if ! screen_in "\.ytd\b"; then
   cd "$DIR"
