@@ -17,6 +17,86 @@
 import { getPoToken, refreshPoToken } from './pot.js';
 import { getProxyReport } from './proxy-list.js';
 
+/* ---------- affidabilita': cache, single-flight, serializzazione ----------
+   Il bot-challenge di YouTube scatta piu' facilmente quando un IP di
+   datacenter fa tante richieste ravvicinate o concorrenti. Per massimizzare
+   il tasso di successo:
+     - cache in memoria (TTL) per gli endpoint idempotenti: /search, /info,
+       /formats, /playlist -> le viste ripetute non toccano piu' YouTube;
+     - single-flight: richieste concorrenti sulla stessa chiave aspettano
+       una sola chiamata a YouTube;
+     - serial: tutte le chiamate a YouTube partono una alla volta (niente
+       raffiche);
+     - backoff: quando YouTube risponde LOGIN_REQUIRED, per un po' non lo
+       richiamiamo (evita di approfondire il flag) e rispondiamo con
+       { retryAfter } cosi' il frontend riprova da solo al momento giusto. */
+
+const cache = new Map(); // key -> { value, expires } | { pending }
+
+function cached(key, ttlMs, fn) {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.expires > now && hit.value !== undefined) return Promise.resolve(hit.value);
+  if (hit && hit.pending) return hit.pending; // single-flight
+  const p = Promise.resolve().then(fn);
+  cache.set(key, { pending: p });
+  p.then((v) => {
+    cache.set(key, { value: v, expires: Date.now() + ttlMs });
+  }).catch(() => {
+    if (cache.get(key) && cache.get(key).pending === p) cache.delete(key); // non cachiamo errori
+  });
+  return p;
+}
+
+let queue = Promise.resolve();
+function serial(fn) {
+  const run = queue.then(fn, fn);
+  queue = run.then(() => {}, () => {});
+  return run;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* stato di blocco anti-bot dell'IP del worker */
+let blockedUntil = 0;
+let blockedRetryMs = 90 * 1000; // cresce: 90s, 3min, 6min, ... cap 10min
+const BLOCKED_MAX = 10 * 60 * 1000;
+
+function isBotErr(e) {
+  return !!e && (e.code === 'LOGIN_REQUIRED' || /not a bot|sign in to confirm|LOGIN_REQUIRED/i.test(String(e.message || '')));
+}
+function markBlocked() {
+  blockedUntil = Date.now() + blockedRetryMs;
+  blockedRetryMs = Math.min(blockedRetryMs * 2, BLOCKED_MAX);
+}
+function clearBlocked() {
+  blockedUntil = 0;
+  blockedRetryMs = 90 * 1000;
+}
+function remainingBlockSec() {
+  const r = blockedUntil - Date.now();
+  return r > 0 ? Math.ceil(r / 1000) : 0;
+}
+
+function botError(rb) {
+  const e = new Error("YouTube ha bloccato temporaneamente l'IP del worker (anti-bot): riprova tra " + rb + 's');
+  e.code = 'BOT_BLOCKED';
+  e.retryAfter = rb;
+  return e;
+}
+
+/* serve una risposta cachata; se non c'e' e l'IP e' in backoff, risponde subito
+   con retryAfter invece di richiamare YouTube. */
+async function serveCached(key, ttlMs, fetchFn) {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.expires > now && hit.value !== undefined) return hit.value;
+  if (hit && hit.pending) return hit.pending;
+  const rb = remainingBlockSec();
+  if (rb > 0) throw botError(rb);
+  return cached(key, ttlMs, fetchFn);
+}
+
 const YT_HOSTS = [
   'https://www.youtube.com/youtubei/v1',
   'https://youtubei.googleapis.com/youtubei/v1',
@@ -36,28 +116,31 @@ export const CLIENT_ANDROID = {
 export const CLIENT_IOS = { clientName: 'IOS', clientVersion: '20.14.4', deviceModel: 'iPhone16,2' };
 
 export async function innertube(path, clients, body) {
-  let lastErr = null;
-  for (let h = 0; h < YT_HOSTS.length; h++) {
-    for (let c = 0; c < clients.length; c++) {
-      const client = clients[c];
-      try {
-        const ua = client === CLIENT_ANDROID ? UA_ANDROID : client === CLIENT_IOS ? UA_IOS : UA_WEB;
-        const res = await fetch(YT_HOSTS[h] + path, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
-          body: JSON.stringify({ context: { client }, ...body }),
-        });
-        if (res.status !== 200) {
-          lastErr = new Error('youtube http ' + res.status);
-          continue;
+  // serial: mai piu' di una chiamata YouTube alla volta (raffiche = flag)
+  return serial(async () => {
+    let lastErr = null;
+    for (let h = 0; h < YT_HOSTS.length; h++) {
+      for (let c = 0; c < clients.length; c++) {
+        const client = clients[c];
+        try {
+          const ua = client === CLIENT_ANDROID ? UA_ANDROID : client === CLIENT_IOS ? UA_IOS : UA_WEB;
+          const res = await fetch(YT_HOSTS[h] + path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+            body: JSON.stringify({ context: { client }, ...body }),
+          });
+          if (res.status !== 200) {
+            lastErr = new Error('youtube http ' + res.status);
+            continue;
+          }
+          return res.json();
+        } catch (e) {
+          lastErr = e;
         }
-        return res.json();
-      } catch (e) {
-        lastErr = e;
       }
     }
-  }
-  throw lastErr || new Error('youtube unreachable');
+    throw lastErr || new Error('youtube unreachable');
+  });
 }
 
 function json(data, status) {
@@ -267,14 +350,16 @@ function extractInitialData(html) {
 }
 
 async function searchHtmlFallback(query) {
-  const res = await fetch('https://www.youtube.com/results?search_query=' + encodeURIComponent(query), {
-    headers: { 'User-Agent': UA_WEB },
+  return serial(async () => {
+    const res = await fetch('https://www.youtube.com/results?search_query=' + encodeURIComponent(query), {
+      headers: { 'User-Agent': UA_WEB },
+    });
+    if (!res.ok) throw new Error('search html http ' + res.status);
+    const html = await res.text();
+    const data = extractInitialData(html);
+    if (!data) throw new Error('search html: ytInitialData non trovato');
+    return parseSearch(data);
   });
-  if (!res.ok) throw new Error('search html http ' + res.status);
-  const html = await res.text();
-  const data = extractInitialData(html);
-  if (!data) throw new Error('search html: ytInitialData non trovato');
-  return parseSearch(data);
 }
 
 async function doSearch(query) {
@@ -300,9 +385,9 @@ let vdAt = 0;
 async function getVisitorData(force) {
   if (!force && vdCache && Date.now() - vdAt < 2 * 60 * 1000) return vdCache;
   try {
-    const res = await fetch('https://www.youtube.com/results?search_query=youtube', {
+    const res = await serial(() => fetch('https://www.youtube.com/results?search_query=youtube', {
       headers: { 'User-Agent': UA_WEB },
-    });
+    }));
     if (!res.ok) return vdCache || null;
     const html = await res.text();
     const m = html.match(/"visitorData":"([^"]+)"/);
@@ -341,8 +426,15 @@ async function withClients(fn, pot) {
       }
     }
     if (results.length) break;
+    // pausa tra i giri: meno pressione sull'IP, piu' probabilita' che il
+    // giro successivo (token rigenerato + visitorData fresco) passi
+    if (round < 2) await sleep(1500 * (round + 1));
   }
-  if (!results.length) throw lastErr || new Error('nessun formato disponibile');
+  if (!results.length) {
+    if (isBotErr(lastErr)) markBlocked(); // IP flaggato: backoff, niente hammering
+    throw lastErr || new Error('nessun formato disponibile');
+  }
+  clearBlocked();
   return results;
 }
 
@@ -382,43 +474,57 @@ function sanitizeName(name) {
   return clean || 'audio';
 }
 
+/* rinfresco leggero dell'URL del formato (1 solo client, 1 giro): usato
+   solo se l'URL cachato risponde 403 (scaduto). Non fa i 3 giri pesanti. */
+async function refreshStreamUrl(id, itag) {
+  const vd = await getVisitorData(true);
+  const client = vd ? { ...CLIENT_ANDROID, visitorData: vd } : { ...CLIENT_ANDROID };
+  try { client.poToken = await refreshPoToken(); } catch (e) { /* usa quello che c'e' */ }
+  const data = await innertube('/player', [client], { videoId: id });
+  const all = parsePlayerFormats(data).formats;
+  return itag ? all.find((f) => String(f.itag) === String(itag)) : pickAudioFmt(all);
+}
+
 async function streamAudio(id, itag, request, pot) {
   const url = new URL(request.url);
   const base = sanitizeName(url.searchParams.get('name')) || 'download';
 
-  // raccoglie gli URL del formato richiesto da tutti i client e prova
-  // ciascuno: se uno solo passa, il download funziona
-  const candidates = [];
-  let mime = '';
-  let lastErr = null;
-  await withClients(async (client) => {
-    const data = await innertube('/player', [client], { videoId: id });
-    const parsed = parsePlayerFormats(data);
-    const all = parsed.formats;
-    const match = itag ? all.find((f) => String(f.itag) === String(itag)) : pickAudioFmt(all);
-    if (match && match.url) {
-      if (!mime) mime = match.mime;
-      candidates.push(match.url);
-      return match;
-    }
-    return null;
-  }, pot);
+  // Gli URL dei formati arrivano dalla stessa cache di /formats (il frontend
+  // chiama sempre /formats prima di /stream). Stesso IP del worker -> gli URL
+  // googlevideo restano validi, e qui NON rifacciamo le chiamate pesanti a
+  // YouTube (che sul piano free superano il limite CPU = crash 1101).
+  const cached = await serveCached('formats:' + id, 20 * 60 * 1000, () => getFormats(id, pot));
+  const all = cached.formats;
+  let match = itag ? all.find((f) => String(f.itag) === String(itag)) : pickAudioFmt(all);
+  if (!match || !match.url) {
+    const err = new Error('formato non disponibile');
+    err.code = 'FORMAT_NOT_FOUND';
+    throw err;
+  }
 
   const headers = { 'User-Agent': UA_ANDROID };
   const range = request.headers.get('Range');
   if (range) headers['Range'] = range;
-  for (let i = 0; i < candidates.length; i++) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(candidates[i], { headers });
+      const res = await fetch(match.url, { headers });
       if (res.ok || res.status === 206) {
         const out = new Response(res.body, res);
         out.headers.set('Access-Control-Allow-Origin', '*');
-        out.headers.set('Content-Disposition', 'attachment; filename="' + base + '.' + extForMime(mime) + '"');
+        out.headers.set('Content-Disposition', 'attachment; filename="' + base + '.' + extForMime(match.mime) + '"');
         return out;
       }
       lastErr = new Error('stream http ' + res.status);
     } catch (e) {
       lastErr = e;
+    }
+    // URL cachato non valido: tenta un rinfresco leggero (1 chiamata) e ripeti
+    if (attempt === 0) {
+      try {
+        const fresh = await refreshStreamUrl(id, itag);
+        if (fresh && fresh.url) match = fresh;
+      } catch (e) { /* resta l'URL precedente */ }
     }
   }
   const err = new Error(lastErr && lastErr.message ? lastErr.message : 'stream non riuscito');
@@ -475,17 +581,17 @@ export default {
       if (path === '/search') {
         const query = (q.get('q') || '').trim().slice(0, 100);
         if (!query) return json({ error: 'missing', message: 'parametro q mancante' }, 400);
-        return json({ query, results: await doSearch(query) });
+        return json({ query, results: await serveCached('search:' + query, 10 * 60 * 1000, () => doSearch(query)) });
       }
       if (path === '/info') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        return json(await getAudioInfo(id, await potFrom(q)));
+        return json(await serveCached('info:' + id, 30 * 60 * 1000, () => getAudioInfo(id, potFrom(q))));
       }
       if (path === '/formats') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
-        const { info, formats } = await getFormats(id, await potFrom(q));
+        const { info, formats } = await serveCached('formats:' + id, 20 * 60 * 1000, () => getFormats(id, potFrom(q)));
         // raggruppa per tipo, ordinati per qualita'
         const audio = formats.filter((f) => f.kind === 'audio').sort((a, b) => b.bitrate - a.bitrate);
         const progressive = formats.filter((f) => f.kind === 'progressive').sort((a, b) => b.height - a.height);
@@ -504,16 +610,22 @@ export default {
       if (path === '/playlist') {
         const list = (q.get('list') || '').trim().slice(0, 60);
         if (!list) return json({ error: 'missing', message: 'parametro list mancante' }, 400);
-        const data = await innertube('/next', [CLIENT_WEB], { playlistId: list });
-        const pl = parsePlaylist(data);
+        const pl = await serveCached('playlist:' + list, 30 * 60 * 1000, async () => {
+          const data = await innertube('/next', [CLIENT_WEB], { playlistId: list });
+          return parsePlaylist(data);
+        });
         if (!pl) return json({ error: 'not found', message: 'playlist non trovata' }, 404);
         return json(pl);
       }
       if (path === '/stream') {
         const id = (q.get('id') || '').trim();
         if (!ID_RE.test(id)) return json({ error: 'bad id', message: 'id non valido' }, 400);
+        const rb = remainingBlockSec();
+        if (rb > 0) throw botError(rb);
         const itag = (q.get('itag') || '').trim();
-        return streamAudio(id, itag || null, request, await potFrom(q));
+        // ATTENZIONE: serve `await` — `return promise` non viene intercettato
+        // dal try/catch qui sopra (il rifiuto diventerebbe un crash 1101).
+        return await streamAudio(id, itag || null, request, await potFrom(q));
       }
       if (path === '/proxies') {
         const report = await getProxyReport();
@@ -528,7 +640,9 @@ export default {
       }
       return json({ ok: true, name: 'yt-downloader engine', endpoints: ['/search', '/info', '/formats', '/playlist', '/stream', '/proxies'] });
     } catch (e) {
-      return json({ error: e.code || 'internal', message: e.message || 'errore interno' }, e.code ? 422 : 500);
+      const body = { error: e.code || 'internal', message: e.message || 'errore interno' };
+      if (e.retryAfter) body.retryAfter = e.retryAfter;
+      return json(body, e.code ? 422 : 500);
     }
   },
 };

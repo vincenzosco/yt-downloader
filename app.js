@@ -61,7 +61,8 @@
       'engine-change-invalid': 'Inserisci un URL valido che inizia con http:// o https://',
       'bot-blocked': "YouTube ha bloccato temporaneamente l'engine (anti-bot). Riprova tra qualche minuto.",
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
-      'interrupted': 'Download interrotto (rete o annullamento). Riprova.'
+      'interrupted': 'Download interrotto (rete o annullamento). Riprova.',
+      'retry-wait': "YouTube ha bloccato l'engine: riprovo da solo tra {0}s…"
     },
     en: {
       'title': 'ytd. — YouTube downloader',
@@ -111,7 +112,8 @@
       'engine-change-invalid': 'Enter a valid URL starting with http:// or https://',
       'bot-blocked': "YouTube temporarily blocked the engine (anti-bot). Try again in a few minutes.",
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
-      'interrupted': 'Download interrupted (network or cancelled). Try again.'
+      'interrupted': 'Download interrupted (network or cancelled). Try again.',
+      'retry-wait': 'YouTube blocked the engine: retrying automatically in {0}s…'
     }
   };
 
@@ -222,11 +224,21 @@
     return list;
   }
 
+  /* se l'engine risponde "bloccato, riprova tra Ns" (worker in backoff
+     anti-bot), ripete da solo l'intera sequenza di engine dopo N secondi,
+     fino a MAX_AUTO_RETRY volte: l'utente non deve fare nulla. */
+  var MAX_AUTO_RETRY = 3;
+  function retrySeconds(msg) {
+    var m = /^RETRY_AFTER_(\d+)$/.exec(String(msg));
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
   /* chiama un endpoint JSON con fallback su piu' engine */
-  function callEngine(pathQuery, ok, err, maxAttempts) {
+  function callEngine(pathQuery, ok, err, maxAttempts, onRetry) {
     var list = engines();
     var idx = 0;
     var lastErr = null;
+    var autoLeft = MAX_AUTO_RETRY;
     (function next() {
       if (idx >= list.length) {
         err(lastErr ? friendlyMsg(lastErr) : 'all engines failed');
@@ -237,6 +249,15 @@
         function (o, e) { xhrJson(engine + pathQuery, o, e); },
         function (val) { ok(val); },
         function (msg) {
+          var rs = retrySeconds(msg);
+          if (rs && autoLeft > 0) {
+            autoLeft--;
+            idx = 0;
+            lastErr = null;
+            if (onRetry) onRetry(rs);
+            setTimeout(next, rs * 1000);
+            return;
+          }
           lastErr = msg;
           if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
         },
@@ -245,10 +266,11 @@
   }
 
   /* chiama uno stream (blob) con fallback su piu' engine */
-  function callEngineStream(pathQuery, ok, err, onProgress, maxAttempts) {
+  function callEngineStream(pathQuery, ok, err, onProgress, maxAttempts, onRetry) {
     var list = engines();
     var idx = 0;
     var lastErr = null;
+    var autoLeft = MAX_AUTO_RETRY;
     (function next() {
       if (idx >= list.length) {
         err((lastErr === 'interrotto') ? 'interrotto' : (lastErr ? friendlyMsg(lastErr) : 'all engines failed'));
@@ -259,6 +281,15 @@
         function (o, e) { xhrBlob(engine + pathQuery, o, e, onProgress); },
         ok,
         function (msg) {
+          var rs = retrySeconds(msg);
+          if (rs && autoLeft > 0) {
+            autoLeft--;
+            idx = 0;
+            lastErr = null;
+            if (onRetry) onRetry(rs);
+            setTimeout(next, rs * 1000);
+            return;
+          }
           lastErr = msg;
           if (shouldRetry(msg)) next(); else err(friendlyMsg(msg));
         },
@@ -279,7 +310,8 @@
         var msg = 'errore ' + x.status;
         try {
           var j = JSON.parse(x.responseText);
-          if (j && j.message) msg = j.message;
+          if (j && j.retryAfter) msg = 'RETRY_AFTER_' + Math.max(5, parseInt(j.retryAfter, 10) || 5);
+          else if (j && j.message) msg = j.message;
         } catch (e) { /* ignora */ }
         err(msg);
       }
@@ -291,13 +323,14 @@
   function friendlyMsg(raw) {
     var s = String(raw == null ? '' : raw);
     if (s === 'interrotto') return t('interrupted');
+    if (retrySeconds(s)) return t('bot-blocked');
     if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) return t('bot-blocked');
     if (/403|429|400/.test(s)) return t('youtube-refused');
     return s;
   }
 
-  function fetchFormats(id, ok, err) {
-    callEngine('/formats?id=' + encodeURIComponent(id), ok, err);
+  function fetchFormats(id, ok, err, onRetry) {
+    callEngine('/formats?id=' + encodeURIComponent(id), ok, err, 3, onRetry);
   }
 
   function xhrBlob(url, ok, err, onProgress) {
@@ -318,7 +351,11 @@
         var r = new FileReader();
         r.onload = function () {
           var msg = 'errore ' + x.status;
-          try { var j = JSON.parse(r.result); if (j && j.message) msg = j.message; } catch (e) { /* body non json */ }
+          try {
+            var j = JSON.parse(r.result);
+            if (j && j.retryAfter) msg = 'RETRY_AFTER_' + Math.max(5, parseInt(j.retryAfter, 10) || 5);
+            else if (j && j.message) msg = j.message;
+          } catch (e) { /* body non json */ }
           err(friendlyMsg(msg));
         };
         r.onerror = function () { err('errore ' + x.status); };
@@ -453,6 +490,9 @@
           btn.textContent = t('error');
           setStatus(statusId || 'search-status', tF('formats-err', friendlyMsg(msg)), true);
           setTimeout(function () { btn.textContent = label; }, 2200);
+        },
+        function (secs) {
+          setStatus(statusId || 'search-status', tF('retry-wait', secs), false);
         });
     });
   }
@@ -536,6 +576,10 @@
       },
       function (loaded, total) {
         if (total) btn.textContent = Math.round(loaded / total * 100) + '%';
+      },
+      3,
+      function (secs) {
+        setStatus(statusId || 'search-status', tF('retry-wait', secs), false);
       });
     function reset() {
       setTimeout(function () {

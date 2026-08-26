@@ -114,6 +114,22 @@ cd worker && node proxy-test.mjs
   una richiesta risponde `LOGIN_REQUIRED`, il worker rigenera il PO token
   (non riusa quello bloccato) e riprova. La generazione ha retry con backoff
   (3 tentativi) e TTL di 8h.
+- **Affidabilità (meno richieste = meno blocchi)**: il worker tiene una cache
+  in memoria per `/search`, `/info`, `/formats`, `/playlist` (TTL 10–30 min)
+  con single-flight (le richieste concorrenti per lo stesso video aspettano
+  una sola chiamata a YouTube) e **serializza** tutte le chiamate a YouTube
+  (mai più di una alla volta: le raffiche fanno scattare il flag).
+- **Backoff anti-bot**: quando tutte le rotte falliscono con `LOGIN_REQUIRED`,
+  il worker smette di martellare YouTube e per un po' (90s → 10min, raddoppia
+  a ogni blocco) risponde subito `{ retryAfter }`; il frontend mostra un
+  countdown e **riprova da solo** fino a 3 volte (nessuna azione richiesta).
+- **Stream leggero**: `/stream` non rifà le chiamate pesanti a YouTube:
+  riusa i formati già cachati da `/formats` (stesso IP del worker, gli URL
+  googlevideo restano validi) e scarica direttamente l'URL. Se l'URL cachato
+  risponde 403, fa un solo rinfresco leggero. Questo evita il crash da limite
+  CPU del piano free (errore 1101) e dimezza i tempi.
+- **Cache URL audio**: gli URL googlevideo non vengono cachati oltre i 20 min
+  della cache `/formats` (riusarli a lungo fa scattare il throttling).
 - **Proxy gratuiti (5 liste)**: il worker scarica e controlla le liste proxy
   pubbliche (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) con check
   di salute e auto-refresh (`/proxies`). ⚠️ Sul piano gratuito Cloudflare il
@@ -127,8 +143,7 @@ cd worker && node proxy-test.mjs
   pochi minuti/ore. L'uso normale (qualche canzone) non lo innesca. Per un uso
   intenso servirebbe un provider aggiuntivo (es. Deno Deploy, che richiede un
   secondo account) oppure un IP residenziale via proxy.
-- Il download via engine non usa cache sull'URL audio: riusare lo stesso URL
-  googlevideo fa scattare il throttling di YouTube.
+
 - **Browser datati**: la pagina è JavaScript ES5 puro (niente `let`/arrow/fetch,
   niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in su
   (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con `<audio>`).
@@ -233,6 +248,22 @@ cd worker && node proxy-test.mjs
   when a request answers `LOGIN_REQUIRED`, the worker regenerates the PO
   token (not the blocked one) and retries. Generation has retry-with-backoff
   (3 attempts) and an 8h TTL.
+- **Reliability (fewer requests = fewer blocks)**: the worker keeps an
+  in-memory cache for `/search`, `/info`, `/formats`, `/playlist`
+  (10–30 min TTL) with single-flight (concurrent requests for the same video
+  wait for a single YouTube call) and **serializes** every YouTube call
+  (never more than one at a time — bursts trigger the flag).
+- **Anti-bot backoff**: when all routes fail with `LOGIN_REQUIRED`, the
+  worker stops hammering YouTube and for a while (90s → 10min, doubling each
+  block) answers immediately with `{ retryAfter }`; the frontend shows a
+  countdown and **retries automatically** up to 3 times (no user action).
+- **Light stream**: `/stream` does not redo the heavy YouTube calls: it
+  reuses the formats already cached by `/formats` (same worker IP, so
+  googlevideo URLs stay valid) and downloads the URL directly. If the cached
+  URL answers 403, it does a single light refresh. This avoids the free-plan
+  CPU-limit crash (error 1101) and halves latency.
+- **Audio URL cache**: googlevideo URLs are not cached beyond the 20-min
+  `/formats` cache (reusing them for long triggers YouTube throttling).
 - **Free proxies (5 lists)**: the worker fetches and health-checks public
   proxy lists (ProxyScrape, GeoNode, Proxifly, iplocate, TheSpeedX) with
   auto-refresh (`/proxies`). ⚠️ On the free Cloudflare plan the worker's
