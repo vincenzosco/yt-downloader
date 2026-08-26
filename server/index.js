@@ -99,7 +99,7 @@ async function publishTunnel() {
   const url = tunnelUrlFromLog();
   if (!url) return;
   const r = await publishTunnelUrl(url);
-  if (r.ok && url !== lastGithubUrl) {
+  if (r.ok && !r.cached && url !== lastGithubUrl) {
     lastGithubUrl = url;
     console.log('[nas] pubblicato su GitHub:', url);
   } else if (!r.ok && !r.cached && r.reason !== 'nessun URL') {

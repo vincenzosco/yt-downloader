@@ -17,9 +17,12 @@ SCREENDIR="$DIR/.screen"
 mkdir -p "$SCREENDIR" 2>/dev/null && chmod 700 "$SCREENDIR" 2>/dev/null || true
 screen_in() { SCREENDIR="$SCREENDIR" "$SCREEN" -ls 2>/dev/null | grep -q "$1"; }
 
-# Config opzionale (secret della registrazione NAS, worker di riferimento):
-#   server/.env  con  NAS_REGISTER_KEY=...  e  REGISTER_WORKER=https://...
+# Config opzionale in server/.env (es. GITHUB_TOKEN per la pubblicazione
+# dell'URL su GitHub). Attenzione: un processo watchdog avviato PRIMA di una
+# modifica a .env può avere in ambiente variabili ormai rimosse dal file —
+# azzerarle prima del source garantisce che valga SOLO il .env corrente.
 ENVF="$DIR/server/.env"
+unset REGISTER_WORKER NAS_REGISTER_KEY GITHUB_TOKEN 2>/dev/null || true
 if [ -f "$ENVF" ]; then
   set -a; . "$ENVF"; set +a
 fi
