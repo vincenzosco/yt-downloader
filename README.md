@@ -16,6 +16,11 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 - **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce, con qualità audio
   scelta (AAC consigliato / Opus migliore / leggero).
 - **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
+- **Scarica sempre disponibile** — il pulsante Download compare subito, anche
+  se il dettaglio video (`/info`) è temporaneamente bloccato da YouTube;
+  `/info` serve solo per durata e titolo, non blocca mai il download.
+- **Errori chiari** — i messaggi di errore riportano il motivo reale (es.
+  anti-bot, download interrotto) invece di generici “all engines failed”.
 - **Anti-bot** — l'engine genera via token PO e ritenta da solo se YouTube
   chiede “sign in to confirm you're not a bot” (vedi Note).
 
@@ -153,6 +158,11 @@ The page UI is bilingual (IT/EN toggle, top right).
 - **Playlist “Download all”** — downloads every track in sequence, with your
   chosen audio quality (AAC recommended / Opus best / light).
 - **IT/EN language** — toggle at the top right (choice is remembered).
+- **Download always available** — the Download button appears immediately,
+  even when the video details (`/info`) are temporarily blocked by YouTube;
+  `/info` is only used for duration and title and never blocks the download.
+- **Clear errors** — error messages report the real reason (e.g. anti-bot,
+  interrupted download) instead of a generic “all engines failed”.
 - **Anti-bot** — the engine generates a PO token and retries on its own if
   YouTube asks “sign in to confirm you're not a bot” (see Notes).
 
@@ -182,6 +192,19 @@ Only the Cloudflare account already in use is required (single account).
 cd worker
 npx wrangler login
 npx wrangler deploy
+```
+
+### Local tests
+
+```bash
+# worker parsing tests (Node.js)
+node worker/test.js
+
+# PO token generation test (Node.js)
+cd worker && node pot-test.mjs
+
+# proxy lists health check (Node.js)
+cd worker && node proxy-test.mjs
 ```
 
 ## Development
