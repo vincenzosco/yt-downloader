@@ -199,6 +199,24 @@ a:hover { color: #e00000; }
 .card .card-preview { margin-top: 14px; }
 .card .card-preview audio { width: 100%; }
 
+/* ---------- barra di progresso ---------- */
+
+.progress {
+  position: relative;
+  height: 6px;
+  margin: 10px 0 0;
+  background: #eee;
+  border: 1px solid #ddd;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: #e00000;
+  -webkit-transition: width .2s ease;
+  transition: width .2s ease;
+}
+
 /* ---------- tray selezione (zip) ---------- */
 
 .sel-tray {
@@ -225,6 +243,7 @@ a:hover { color: #e00000; }
 }
 .sel-tray .btn { margin-right: 8px; padding: 7px 14px; font-size: 13px; }
 .sel-tray .btn.is-busy { opacity: .55; cursor: progress; }
+.sel-tray .progress { margin: 8px 0 0; }
 
 /* ---------- lingua ---------- */
 

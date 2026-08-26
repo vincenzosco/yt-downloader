@@ -584,32 +584,41 @@
       var itag = opt.value;
       var ext = extForMime(opt.getAttribute('data-mime') || '');
       close();
-      startDownload(item, itag, ext, go, label, statusId);
+      startDownload(item, itag, ext, go, label, statusId, container);
     });
   }
 
-  /* avvia il download di un singolo formato (itag) */
-  function startDownload(item, itag, ext, btn, label, statusId) {
+  /* avvia il download di un singolo formato (itag); mostra una barra di
+     progresso nel container (il pulsante del picker viene rimosso dal DOM
+     quando il picker si chiude, quindi la % sul pulsante non sarebbe visibile). */
+  function startDownload(item, itag, ext, btn, label, statusId, container) {
     var title = item.title || item.id;
     var path = '/stream?id=' + encodeURIComponent(item.id) +
       '&itag=' + encodeURIComponent(itag) +
       '&name=' + encodeURIComponent(title);
+    var bar = attachProgress(container);
     btn.setAttribute('data-busy', '1');
     btn.textContent = '…';
+    function finish() { bar.done(); }
     callEngineStream(
       path,
       function (blob) {
         saveBlob(blob, sanitizeTitle(title) + '.' + ext, statusId);
         btn.textContent = t('saved');
+        finish();
         reset();
       },
       function (msg) {
         btn.textContent = t('error');
         setStatus(statusId || 'search-status', tF('download-err', friendlyMsg(msg)), true);
+        finish();
         reset();
       },
       function (loaded, total) {
-        if (total) btn.textContent = Math.round(loaded / total * 100) + '%';
+        if (total) {
+          setBar(bar.el, loaded / total);
+          btn.textContent = Math.round(loaded / total * 100) + '%';
+        }
       },
       3,
       function (secs) {
@@ -679,6 +688,29 @@
       document.body.removeChild(a);
       U.revokeObjectURL(url);
     }, 1500);
+  }
+
+  /* ---------- barra di progresso ---------- */
+
+  function setBar(el, frac) {
+    if (!el) return;
+    frac = Math.max(0, Math.min(1, frac || 0));
+    el.style.width = Math.round(frac * 100) + '%';
+  }
+
+  /* crea una barra di progresso dentro container; ritorna {el, done}
+     (done() la rimuove dal DOM) */
+  function attachProgress(container) {
+    var bar = document.createElement('div');
+    bar.className = 'progress';
+    var inner = document.createElement('div');
+    inner.className = 'progress-bar';
+    bar.appendChild(inner);
+    if (container) container.appendChild(bar);
+    return {
+      el: inner,
+      done: function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }
+    };
   }
 
   /* ---------- selezione multipla + zip ---------- */
@@ -866,7 +898,7 @@
 
   /* scarica una canzone come bytes per lo zip: stream senza itag (il worker
      sceglie il miglior audio), estensione dal Content-Type del blob. */
-  function fetchZipItem(item, ok, err) {
+  function fetchZipItem(item, ok, err, onProgress) {
     callEngineStream(
       '/stream?id=' + encodeURIComponent(item.id) + '&name=' + encodeURIComponent(item.title || item.id),
       function (blob) {
@@ -877,7 +909,7 @@
         });
       },
       function (msg) { err(friendlyMsg(msg)); },
-      null, 3, null);
+      onProgress, 3, null);
   }
 
   function downloadZip(zipBtn) {
@@ -891,14 +923,22 @@
     var lastMsg = null;
     var zip = new ZipBuilder();
     var i = 0;
+    var barWrap = $('sel-progress');
+    var barEl = $('sel-progress-bar');
+    if (barWrap) barWrap.hidden = false;
+    setBar(barEl, 0);
     (function next() {
       if (i >= items.length) {
         var done = items.length - failures;
         if (done) {
+          setBar(barEl, 1);
           var zipName = 'ytd-' + new Date().toISOString().slice(0, 10) + '.zip';
           saveBlob(zip.build(), zipName, null);
           setSelStatus(tF('zip-done', done) + (failures ? tF('zip-some-failed', failures) : ''));
+          setTimeout(function () { if (barWrap) barWrap.hidden = true; setBar(barEl, 0); }, 1500);
         } else {
+          if (barWrap) barWrap.hidden = true;
+          setBar(barEl, 0);
           setSelStatus(tF('zip-err', lastMsg || t('zip-unavailable')), true);
         }
         zipBtn.removeAttribute('data-busy');
@@ -911,9 +951,13 @@
       var item = items[i];
       zipBtn.textContent = (i + 1) + '/' + items.length;
       setSelStatus(tF('zip-progress', i + 1, items.length, item.title));
+      setBar(barEl, i / items.length);
       fetchZipItem(item,
         function (name, bytes) { zip.add(name, bytes); i++; next(); },
-        function (msg) { lastMsg = msg; failures++; i++; next(); });
+        function (msg) { lastMsg = msg; failures++; i++; next(); },
+        function (loaded, total) {
+          if (total) setBar(barEl, (i + loaded / total) / items.length);
+        });
     })();
   }
 
@@ -1152,16 +1196,20 @@
         ext = opt.getAttribute('data-ext') || 'm4a';
       }
       btn.textContent = '0/' + items.length;
+      var bar = attachProgress(btn.parentNode);
       var i = 0;
       (function next() {
         if (i >= items.length) {
+          setBar(bar.el, 1);
           btn.textContent = t('done');
-          setTimeout(function () { btn.textContent = t('download-all'); busy = false; }, 2500);
+          setTimeout(function () { bar.done(); btn.textContent = t('download-all'); busy = false; }, 2500);
           return;
         }
         var item = items[i];
         btn.textContent = (i + 1) + '/' + items.length;
-        fetchAudio(item, itag, ext, null,
+        setBar(bar.el, i / items.length);
+        fetchAudio(item, itag, ext,
+          function (loaded, total) { if (total) setBar(bar.el, (i + loaded / total) / items.length); },
           function (blob, name) { saveBlob(blob, name); i++; next(); },
           function () { i++; next(); });
       })();

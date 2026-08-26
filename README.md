@@ -25,6 +25,8 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
   `/info` serve solo per durata e titolo, non blocca mai il download.
 - **Errori chiari** — i messaggi di errore riportano il motivo reale (es.
   anti-bot, download interrotto) invece di generici “all engines failed”.
+- **Barre di progresso** — ogni download (singolo, “Scarica tutte” e batch
+  .zip) mostra una barra rossa che avanza con i byte ricevuti.
 - **Anti-bot** — l'engine genera via token PO e ritenta da solo se YouTube
   chiede “sign in to confirm you're not a bot” (vedi Note).
 
@@ -191,6 +193,8 @@ The page UI is bilingual (IT/EN toggle, top right).
   `/info` is only used for duration and title and never blocks the download.
 - **Clear errors** — error messages report the real reason (e.g. anti-bot,
   interrupted download) instead of a generic “all engines failed”.
+- **Progress bars** — every download (single, “Download all” and the .zip
+  batch) shows a red bar advancing with the received bytes.
 - **Anti-bot** — the engine generates a PO token and retries on its own if
   YouTube asks “sign in to confirm you're not a bot” (see Notes).
 
