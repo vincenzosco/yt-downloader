@@ -1,0 +1,10 @@
+name = "yt-downloader"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+# Registro del NAS self-host: il NAS salva qui il suo URL pubblico corrente
+# (il tunnel trycloudflare cambia URL a ogni riavvio) e la pagina lo scopre
+# via /nas per usarlo come engine preferito.
+[[kv_namespaces]]
+binding = "YTD_NAS"
+id = "fc411ccd5354409cb1ab98686fe1d3cb"

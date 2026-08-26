@@ -12,6 +12,7 @@
 
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // il server deve restare su (NAS/VPS): un errore isolato non deve ucciderlo
@@ -23,6 +24,55 @@ if (process.env.POT) globalThis.POT = process.env.POT;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const worker = await import(path.join(__dirname, '..', 'worker', 'index.js')).then((m) => m.default);
+
+// ---- registrazione del tunnel sul worker Cloudflare ----
+// Il NAS registra il suo URL pubblico corrente (trycloudflare, che cambia a
+// ogni riavvio) sul worker: la pagina lo scopre via /nas e lo usa come engine
+// preferito. La chiave evita che chiunque registri un NAS farlocco.
+// Env:  REGISTER_WORKER (URL del worker, es. https://xxx.workers.dev)
+//       NAS_REGISTER_KEY  (chiave condivisa col worker)
+const REGISTER_WORKER = (process.env.REGISTER_WORKER || '').replace(/\/+$/, '');
+const REGISTER_KEY = process.env.NAS_REGISTER_KEY || '';
+
+function tunnelUrlFromLog() {
+  try {
+    const log = fs.readFileSync(path.join(__dirname, '..', 'server.log.cloudflared'), 'utf8');
+    // il log accumula gli URL delle sessioni passate: serve l'ULTIMO
+    const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
+    if (m && m.length) return m[m.length - 1];
+  } catch (_e) { /* log non ancora presente */ }
+  return null;
+}
+
+let lastRegisteredUrl = null;
+async function registerTunnel() {
+  if (!REGISTER_WORKER || !REGISTER_KEY) return;
+  const url = tunnelUrlFromLog();
+  if (!url) return;
+  // heartbeat: registra sempre (il worker scarta il NAS dopo 3 min di silenzio).
+  // Log solo quando l'URL cambia per non sporcare il log ogni 60s.
+  try {
+    const res = await fetch(REGISTER_WORKER + '/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, key: REGISTER_KEY }),
+    });
+    if (res.ok) {
+      if (url !== lastRegisteredUrl) {
+        lastRegisteredUrl = url;
+        console.log('[nas] registrato su worker:', url);
+      }
+    } else {
+      console.error('[nas] registrazione fallita:', res.status, (await res.text()).slice(0, 120));
+    }
+  } catch (e) {
+    console.error('[nas] registrazione errore:', e.message);
+  }
+}
+
+// registra subito e poi ogni 60s (l'URL del tunnel può cambiare)
+registerTunnel();
+setInterval(registerTunnel, 60 * 1000);
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 
@@ -51,8 +101,8 @@ const server = http.createServer(async (req, res) => {
       let tunnelUrl = null;
       try {
         const log = await import('node:fs/promises').then((fs) => fs.readFile(logFile, 'utf8'));
-        const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-        if (m) tunnelUrl = m[0];
+        const m = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
+        if (m && m.length) tunnelUrl = m[m.length - 1];
       } catch (_e) { /* log non ancora presente */ }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ tunnelUrl, local: 'http://' + host }));

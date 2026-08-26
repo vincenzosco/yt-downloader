@@ -26,6 +26,7 @@
       'engine-label': 'engine:',
       'engine-change': 'cambia',
       'engine-not-configured': 'non configurato',
+      'engine-nas-active': 'NAS attivo',
       'disclaimer': 'solo per contenuti di cui hai i diritti.',
       'engine-missing': "Engine non configurato. Apri il worker (deploy) e incolla qui il suo URL con \u201ccambia\u201d in fondo alla pagina.",
       'searching': 'cerco…',
@@ -88,6 +89,7 @@
       'engine-label': 'engine:',
       'engine-change': 'change',
       'engine-not-configured': 'not configured',
+      'engine-nas-active': 'NAS active',
       'disclaimer': 'only for content you have rights to.',
       'engine-missing': "Engine not configured. Deploy the worker and paste its URL here via \u201cchange\u201d at the bottom of the page.",
       'searching': 'searching…',
@@ -238,11 +240,44 @@
     return (v && v.length) ? v : ENGINE_CLOUDFLARE;
   }
 
-  /* elenco ordinato di engine da provare: custom > Cloudflare > Deno */
+  /* elenco ordinato di engine da provare: custom > NAS (auto) > Cloudflare */
+  var NAS_TTL = 5 * 60 * 1000; /* ricontrolla il NAS ogni 5 min */
+  var nasUrl = null;
+  var nasChecked = 0;
+  var nasChecking = false;
+
+  /* chiede al worker l'URL corrente del NAS self-host. Se il worker non
+     risponde (o non c'e' un NAS registrato) nasUrl resta null e si usa il
+     worker come prima. */
+  function refreshNas(force) {
+    if (nasChecking) return;
+    if (!force && nasChecked && (Date.now() - nasChecked) < NAS_TTL) return;
+    nasChecking = true;
+    var x = new XMLHttpRequest();
+    x.open('GET', ENGINE_CLOUDFLARE + '/nas?t=' + Date.now(), true);
+    x.timeout = 8000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      nasChecking = false;
+      nasChecked = Date.now();
+      if (x.status >= 200 && x.status < 300) {
+        try {
+          var d = JSON.parse(x.responseText);
+          if (d && d.url) nasUrl = d.url;
+          else nasUrl = null;
+        } catch (e) { nasUrl = null; }
+        if (typeof window.__ytdOnNas === 'function') window.__ytdOnNas(nasUrl);
+      }
+    };
+    x.onerror = function () { nasChecking = false; nasChecked = Date.now(); };
+    x.send();
+  }
+
   function engines() {
     var list = [];
     var custom = storageGet(ENGINE_KEY);
     if (custom) list.push(custom);
+    if (nasUrl && list.indexOf(nasUrl) === -1) list.push(nasUrl);
     if (list.indexOf(ENGINE_CLOUDFLARE) === -1) list.push(ENGINE_CLOUDFLARE);
     return list;
   }
@@ -1227,9 +1262,8 @@
     var el = $('engine-url');
     var u = engineUrl();
     el.textContent = u || t('engine-not-configured');
-  }
-
-  function bindEngineChange() {
+    if (el && nasUrl) el.textContent = nasUrl + '  (' + t('engine-nas-active') + ')  \u2192 ' + (u || t('engine-not-configured'));
+  }  function bindEngineChange() {
     $('engine-change').addEventListener('click', function () {
       var cur = engineUrl();
       var v = window.prompt(t('engine-change-prompt'), cur);
@@ -1237,7 +1271,9 @@
       v = String(v || '').replace(/^\s+|\s+$/g, '');
       if (!v) { storageDel(ENGINE_KEY); renderEngineUrl(); return; }
       if (!/^https?:\/\//.test(v)) { window.alert(t('engine-change-invalid')); return; }
+
       storageSet(ENGINE_KEY, v);
+      refreshNas(true);                    /* rivaluta subito l'ordine engine */
       renderEngineUrl();
     });
   }
@@ -1303,6 +1339,7 @@
 
   /* hook minimo per test/debug */
   window.__ytdAutoUpdate = { checkVersion: checkVersion, busy: anyDownloadBusy, version: YTD_VER };
+  window.__ytdNas = { engines: engines, get: function () { return nasUrl; } };
 
   /* ---------- init ---------- */
 
@@ -1314,6 +1351,14 @@
     bindEngineChange();
     bindSelTray();
     renderVersion();
+    /* discovery automatico del NAS self-host (l'URL del tunnel cambia a ogni
+       riavvio: la pagina lo chiede al worker, che lo riceve dal NAS) */
+    window.__ytdOnNas = function (u) {
+      nasUrl = u;
+      renderEngineUrl();
+    };
+    refreshNas(false);
+    setInterval(function () { refreshNas(false); }, NAS_TTL);
     setTimeout(checkVersion, 4000);
     setInterval(checkVersion, 60000);
 

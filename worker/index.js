@@ -204,6 +204,52 @@ function json(data, status) {
   });
 }
 
+/* ---- discovery del NAS self-host ----
+   Il NAS registra qui il suo URL pubblico corrente (il tunnel trycloudflare
+   cambia URL a ogni riavvio). La pagina chiede /nas e usa il NAS come engine
+   preferito, con il worker come fallback automatico. L'URL vive in KV
+   (il worker ha tante istanze: la memoria non è condivisa). */
+const NAS_KV_KEY = 'nas.url';
+const NAS_FRESH_MS = 3 * 60 * 1000;
+let NAS_KEY = '';
+
+/* le secret di wrangler arrivano nel parametro env del fetch (non come
+   globale): le leggiamo li' e le teniamo in cache. */
+export function setNasKey(env) {
+  if (!NAS_KEY && env && env.NAS_REGISTER_KEY) NAS_KEY = env.NAS_REGISTER_KEY;
+}
+
+export async function registerNas(rawBody, env) {
+  if (!NAS_KEY) return json({ error: 'disabled', message: 'registrazione disabilitata (NAS_REGISTER_KEY non impostata)' }, 403);
+  let body = null;
+  try { body = JSON.parse(rawBody || '{}'); } catch (e) { body = {}; }
+  if (!body || body.key !== NAS_KEY) return json({ error: 'bad key', message: 'chiave non valida' }, 403);
+  const url = String(body.url || '').trim();
+  if (!/^https?:\/\//.test(url)) return json({ error: 'bad url', message: 'url non valido' }, 400);
+  const now = Date.now();
+  if (env && env.YTD_NAS) {
+    await env.YTD_NAS.put(NAS_KV_KEY, JSON.stringify({ url, at: now }));
+  }
+  return json({ ok: true, url, at: now });
+}
+
+export async function nasInfo(env) {
+  let rec = null;
+  if (env && env.YTD_NAS) {
+    try {
+      const raw = await env.YTD_NAS.get(NAS_KV_KEY);
+      if (raw) rec = JSON.parse(raw);
+    } catch (e) { /* ignora */ }
+  }
+  const fresh = rec && rec.url && (Date.now() - rec.at < NAS_FRESH_MS);
+  return json({
+    ok: true,
+    url: fresh ? rec.url : null,
+    at: fresh ? rec.at : null,
+    stale: !!rec && !!rec.url && !fresh,
+  });
+}
+
 function pickThumb(thumbs) {
   if (!Array.isArray(thumbs) || !thumbs.length) return '';
   let best = null;
@@ -645,7 +691,8 @@ async function potFrom(q) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
+    setNasKey(env);
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
     const q = url.searchParams;
@@ -709,6 +756,12 @@ export default {
         // ATTENZIONE: serve `await` — `return promise` non viene intercettato
         // dal try/catch qui sopra (il rifiuto diventerebbe un crash 1101).
         return await streamAudio(id, itag || null, request, await potFrom(q));
+      }
+      if (path === '/register' && request.method === 'POST') {
+        return registerNas(await request.text(), env);
+      }
+      if (path === '/nas') {
+        return nasInfo(env);
       }
       if (path === '/proxies') {
         const report = await getProxyReport();

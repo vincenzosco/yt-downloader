@@ -9,6 +9,13 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8787}"
 LOG="$DIR/server.log"
 
+# Config opzionale (secret della registrazione NAS, worker di riferimento):
+#   server/.env  con  NAS_REGISTER_KEY=...  e  REGISTER_WORKER=https://...
+ENVF="$DIR/server/.env"
+if [ -f "$ENVF" ]; then
+  set -a; . "$ENVF"; set +a
+fi
+
 # pgrep non è sempre disponibile (es. Synology): usa ps | grep
 is_running() {
   ps -ef 2>/dev/null | grep -v grep | grep -q "$1"
@@ -25,9 +32,10 @@ if [ -z "$NODE" ]; then
 fi
 
 # 1) engine node (processo persistente: sopravvive alla chiusura della SSH)
-if ! is_running "server/index.js"; then
+#    [.] evita che is_running matchi la riga di comando di start.sh stessa
+if ! is_running "server/index[.]js"; then
   cd "$DIR"
-  setsid nohup "$NODE" server/index.js >> "$LOG" 2>&1 &
+  setsid nohup env REGISTER_WORKER="${REGISTER_WORKER:-}" NAS_REGISTER_KEY="${NAS_REGISTER_KEY:-}" "$NODE" server/index.js >> "$LOG" 2>&1 &
   echo "engine avviato su porta $PORT — log: $LOG"
 else
   echo "engine già attivo"

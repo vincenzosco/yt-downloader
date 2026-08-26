@@ -39,9 +39,10 @@ browser (pagina statica su GitHub Pages)
    │  oEmbed YouTube (CORS nativo) → anteprima titolo/copertina
    │  chiamate all'engine (CORS *)
    ▼
-engine: Cloudflare Worker (gratis, unico account: già usato)
+engine: Cloudflare Worker (gratis) o NAS self-host (IP residenziale,
+   scoperto automaticamente via /nas: engine custom → NAS → worker)
    │  API Innertube lato server, senza Origin, retry su più host/client
-   │  PO token (anti-bot) generato dentro il worker
+   │  PO token (anti-bot) generato dentro l'engine
    ▼
 YouTube → URL audio/video → l'engine lo streama al browser → download
 ```
@@ -56,6 +57,8 @@ YouTube → URL audio/video → l'engine lo streama al browser → download
 | `/playlist?list=…` | elenco tracce di una playlist                    |
 | `/stream?id=…&itag=…` | stream del file (CORS, Range), itag opzionale |
 | `/proxies`             | check di salute delle 5 liste proxy pubbliche |
+| `/register` (POST)     | il NAS self-host registra il suo URL pubblico (chiave) |
+| `/nas`                 | la pagina scopre l'URL corrente del NAS         |
 
 ## Auto-update della pagina
 
@@ -129,14 +132,39 @@ sudo /usr/local/etc/rc.d/S99ytd.sh stop    # li ferma
 
 Al riavvio del NAS l'engine e il tunnel ripartono da soli.
 
-### Usare il NAS come engine nella pagina
+### Usare il NAS come engine nella pagina (automatico)
 
-Nella pagina, il campo “Engine URL” (ingranaggio in alto a destra) accetta
-l'URL del tunnel: incolla `https://….trycloudflare.com` e la pagina userà il
-NAS invece del worker. Il worker Cloudflare resta attivo come fallback.
+La pagina **usa il NAS da sola**, senza incollare nulla:
+
+1. il NAS registra ogni 60 secondi il suo URL pubblico corrente sul worker
+   Cloudflare (`POST /register`, protetto da chiave) — così il worker sa
+   sempre dove raggiungerlo, anche quando il tunnel cambia URL;
+2. all'avvio la pagina chiede al worker `GET /nas` e, se c'è un NAS
+   registrato, lo mette **in cima** agli engine (ordine: engine custom →
+   NAS → worker Cloudflare), con ricontrollo ogni 5 minuti;
+3. se il NAS non risponde, la pagina **ripiega automaticamente sul worker**
+   (nessun errore per l'utente).
+
+Configurazione (una tantum, sul NAS e sul worker):
+
+```bash
+# 1) sul worker: chiave condivisa (una sola volta)
+cd worker && openssl rand -hex 24 | npx wrangler secret put NAS_REGISTER_KEY
+
+# 2) sul NAS: stessa chiave + URL del worker in server/.env (non in git)
+cat > server/.env <<EOF
+NAS_REGISTER_KEY=<stessa chiave>
+REGISTER_WORKER=https://xxx.workers.dev
+EOF
+```
+
+Il footer della pagina mostra il NAS attivo (es. `…trycloudflare.com (NAS
+attivo) → …`). Resta comunque possibile forzare un engine specifico con il
+campo “Engine URL” (in cima, a destra).
 
 > **Nota**: con il tunnel gratuito `trycloudflare` l'URL cambia a ogni
-> riavvio del tunnel. Per un URL stabile serve un tunnel “named” (richiede
+> riavvio del tunnel, ma il NAS lo ri-registra da solo: la pagina non se ne
+> accorge. Per un URL *stabile* serve comunque un tunnel “named” (richiede
 > un account Cloudflare e un dominio).
 
 ## Sviluppo
@@ -265,10 +293,12 @@ The page UI is bilingual (IT/EN toggle, top right).
 
 ## How it works
 
-GitHub Pages (static) + serverless engine (Cloudflare Worker).
-YouTube blocks requests with `Origin` headers that come from the browser.
-The engine makes API calls server-side, without `Origin`, and generates its
-own anti-bot PO token (`worker/pot.js`) inside the worker.
+GitHub Pages (static) + serverless engine (Cloudflare Worker) or a
+self-hosted NAS engine (residential IP, auto-discovered via `/nas`;
+engine order: custom → NAS → worker). YouTube blocks requests with `Origin`
+headers that come from the browser. The engine makes API calls server-side,
+without `Origin`, and generates its own anti-bot PO token (`worker/pot.js`)
+inside the engine.
 
 ### Engine endpoints (`worker/index.js`)
 
@@ -280,6 +310,8 @@ own anti-bot PO token (`worker/pot.js`) inside the worker.
 | `/playlist?list=…` | playlist track list                              |
 | `/stream?id=…&itag=…` | stream the file (CORS, Range), optional itag  |
 | `/proxies`             | health check of the 5 public proxy lists     |
+| `/register` (POST)     | the self-hosted NAS registers its public URL (key) |
+| `/nas`                 | the page discovers the current NAS URL         |
 
 ## Auto-update
 
@@ -344,14 +376,39 @@ sudo /usr/local/etc/rc.d/S99ytd.sh stop    # stops both
 
 After a NAS reboot the engine and the tunnel start on their own.
 
-### Using the NAS as engine in the page
+### Using the NAS as engine in the page (automatic)
 
-In the page, the “Engine URL” field (gear icon, top right) accepts the
-tunnel URL: paste `https://….trycloudflare.com` and the page will use the
-NAS instead of the worker. The Cloudflare worker stays live as a fallback.
+The page **uses the NAS by itself**, nothing to paste:
+
+1. the NAS registers its current public URL on the Cloudflare worker every
+   60 seconds (`POST /register`, key-protected) — the worker always knows
+   where to reach it, even when the tunnel URL changes;
+2. on load the page asks the worker `GET /nas` and, if a NAS is
+   registered, puts it **on top** of the engine list (order: custom engine →
+   NAS → Cloudflare worker), re-checking every 5 minutes;
+3. if the NAS does not answer, the page **automatically falls back to the
+   worker** (no user-facing error).
+
+One-time setup (on the NAS and the worker):
+
+```bash
+# 1) on the worker: shared key (once)
+cd worker && openssl rand -hex 24 | npx wrangler secret put NAS_REGISTER_KEY
+
+# 2) on the NAS: same key + worker URL in server/.env (not in git)
+cat > server/.env <<EOF
+NAS_REGISTER_KEY=<same key>
+REGISTER_WORKER=https://xxx.workers.dev
+EOF
+```
+
+The page footer shows the active NAS (e.g. `…trycloudflare.com (NAS
+active) → …`). You can still force a specific engine with the “Engine URL”
+field (top right).
 
 > **Note**: with the free `trycloudflare` tunnel the URL changes on every
-> tunnel restart. For a stable URL you need a “named” tunnel (requires a
+> tunnel restart, but the NAS re-registers it by itself: the page never
+> notices. For a *stable* URL you still need a “named” tunnel (requires a
 > Cloudflare account and a domain).
 
 ### Local tests

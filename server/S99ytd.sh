@@ -19,7 +19,8 @@ case "$1" in
     fi
     ;;
   stop)
-    ps -ef 2>/dev/null | grep -v grep | grep "server/index.js" | awk '{print $2}' | xargs -r kill 2>/dev/null || true
+    # [.] evita che il pattern matchi questa stessa riga di comando
+    ps -ef 2>/dev/null | grep -v grep | grep "server/index[.]js" | awk '{print $2}' | xargs -r kill 2>/dev/null || true
     ps -ef 2>/dev/null | grep -v grep | grep "cloudflared tunnel --url" | awk '{print $2}' | xargs -r kill 2>/dev/null || true
     ;;
   *)
