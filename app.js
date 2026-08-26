@@ -307,6 +307,82 @@
     x.send();
   }
 
+  /* Fonti remote (browser-legibili via CORS) delle liste ufficiali delle
+     istanze Piped. La pagina le scarica a RUNTIME e aggrega gli URL con il
+     pool locale, così se una nuova istanza pubblica diventa disponibile la
+     pagina la scopre da sola, senza dover aggiornare il codice.
+       - TeamPiped/documentation (markdown, CORS *) — la lista ufficiale
+       - api.github.com (JSON, CORS *) — stesso contenuto, formato diverso
+     Il fetch fallisce senza conseguenze: si usa comunque PHP_POOL. */
+  var PIPED_LIST_SOURCES = [
+    'https://raw.githubusercontent.com/TeamPiped/documentation/main/content/docs/public-instances/index.md',
+    'https://api.github.com/repos/TeamPiped/documentation/contents/content/docs/public-instances/index.md'
+  ];
+
+  /* estrae gli URL delle istanze Piped da markdown O json della API GitHub */
+  function pipedUrlsFrom(body) {
+    var out = [];
+    var text = String(body == null ? '' : body);
+    var m;
+    var re = /https:\/\/[a-z0-9.-]*[:]?[a-z0-9.-]*piped[a-z0-9.-]*/gi;
+    var seen = {};
+    while ((m = re.exec(text)) !== null) {
+      var u = m[0].replace(/\/+$/, '');
+      if (/\s|['"]/.test(u)) continue;
+      if (!seen[u]) { seen[u] = 1; out.push(u); }
+    }
+    return out;
+  }
+
+  function pipedFetchLists(cb) {
+    var urls = [];
+    var pending = PIPED_LIST_SOURCES.length;
+    if (!pending) { cb([]); return; }
+    PIPED_LIST_SOURCES.forEach(function (src) {
+      var x = new XMLHttpRequest();
+      x.open('GET', src, true);
+      x.timeout = 10000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        if (x.status >= 200 && x.status < 300) {
+          /* api.github.com restituisce l'html o {content}? per markdown textuale
+             basta usare la risposta come stringa ed estrarre gli URL */
+          var b = x.responseText || '';
+          /* se api.github restituisce base64 (content), decodifica per cercare */
+          var decoded = b;
+          try {
+            var j = JSON.parse(b);
+            if (j && typeof j.content === 'string') {
+              decoded = decodeURIComponent(escape(atob(j.content.replace(/\s/g, ''))));
+            }
+          } catch (e) { /* non json: usa il body grezzo */ }
+          urls = urls.concat(pipedUrlsFrom(decoded));
+        }
+        pending--;
+        if (pending === 0) cb(urls);
+      };
+      x.onerror = function () { pending--; if (pending === 0) cb(urls); };
+      x.ontimeout = function () { pending--; if (pending === 0) cb(urls); };
+      x.send();
+    });
+  }
+
+  /* pool finale: hardcoded + quelli dalle liste remote, deduplicato e con
+     l'hardcoded in testa (per ordinamento prevedibile) */
+  function pipedFullPool(listUrls) {
+    var out = [];
+    var seen = {};
+    function add(u) {
+      u = String(u || '').replace(/\/+$/, '').replace(/^http:\/\//, 'https://');
+      if (!u || seen[u] || !/^https:\/\//.test(u)) return;
+      seen[u] = 1;
+      out.push(u);
+    }
+    PIPED_POOL.forEach(add);
+    (listUrls || []).forEach(add);
+    return out;
+  }
+
   function pipedRefresh(force, cb) {
     if (pipedChecking) {
       if (cb) setTimeout(function () { cb(pipedBase); }, 300);
@@ -319,28 +395,37 @@
     var cached = pipedLoadCache();
     if (!force && cached && !pipedBase) { pipedBase = cached; pipedChecked = Date.now(); if (cb) cb(pipedBase); return; }
     pipedChecking = true;
-    var alive = [];
-    var pending = PIPED_POOL.length;
-    if (!pending) { pipedChecking = false; if (cb) cb(''); return; }
-    for (var i = 0; i < PIPED_POOL.length; i++) {
-      (function (base) {
-        pipedProbe(base, function (ok) {
-          if (ok && alive.indexOf(base) === -1) alive.push(base);
-          pending--;
-          if (pending === 0) {
-            pipedChecking = false;
-            pipedChecked = Date.now();
-            /* se il health check non trova nulla, ripiega sull'istanza nota
-               (ultima risorsa): alcune istanze mentono o rispondono solo su
-               certe rotte, meglio provare che dichiarare tutto morto */
-            pipedBase = alive.length ? alive[0] : PIPED_FALLBACK;
-            if (pipedBase) pipedSave(pipedBase);
-            if (typeof window.__ytdOnPiped === 'function') window.__ytdOnPiped(pipedBase);
-            if (cb) cb(pipedBase);
-          }
-        });
-      })(PIPED_POOL[i]);
-    }
+    pipedFetchLists(function (listUrls) {
+      var pool = pipedFullPool(listUrls);
+      var alive = [];
+      var pending = pool.length;
+      if (!pending) {
+        pipedChecking = false;
+        pipedBase = PIPED_FALLBACK;
+        pipedChecked = Date.now();
+        if (cb) cb(pipedBase);
+        return;
+      }
+      for (var i = 0; i < pool.length; i++) {
+        (function (base) {
+          pipedProbe(base, function (ok) {
+            if (ok && alive.indexOf(base) === -1) alive.push(base);
+            pending--;
+            if (pending === 0) {
+              pipedChecking = false;
+              pipedChecked = Date.now();
+              /* se il health check non trova nulla, ripiega sull'istanza nota
+                 (ultima risorsa): alcune istanze mentono o rispondono solo su
+                 certe rotte, meglio provare che dichiarare tutto morto */
+              pipedBase = alive.length ? alive[0] : PIPED_FALLBACK;
+              if (pipedBase) pipedSave(pipedBase);
+              if (typeof window.__ytdOnPiped === 'function') window.__ytdOnPiped(pipedBase);
+              if (cb) cb(pipedBase);
+            }
+          });
+        })(pool[i]);
+      }
+    });
   }
 
   /* istanza viva non ancora provata in questo giro; se il health check non
@@ -1472,7 +1557,9 @@
   window.__ytdPiped = {
     base: function () { return pipedBase; },
     refresh: function (cb) { pipedRefresh(true, cb); },
-    pool: PIPED_POOL
+    pool: PIPED_POOL,
+    extractUrls: function (body) { return pipedUrlsFrom(body); },
+    lists: function (cb) { pipedFetchLists(cb); }
   };
 
   /* ---------- init ---------- */
