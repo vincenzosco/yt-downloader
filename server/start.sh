@@ -50,7 +50,7 @@ fi
 if ! screen_in "\.ytd\b"; then
   cd "$DIR"
   SCREENDIR="$SCREENDIR" "$SCREEN" -dmS ytd -L -Logfile "$LOG.screen" \
-    env REGISTER_WORKER="${REGISTER_WORKER:-}" NAS_REGISTER_KEY="${NAS_REGISTER_KEY:-}" "$NODE" server/index.js
+    env REGISTER_WORKER="${REGISTER_WORKER:-}" NAS_REGISTER_KEY="${NAS_REGISTER_KEY:-}" GITHUB_TOKEN="${GITHUB_TOKEN:-}" "$NODE" server/index.js
   echo "engine avviato su porta $PORT (screen ytd) — log: $LOG.screen"
 else
   echo "engine già attivo (screen ytd)"
