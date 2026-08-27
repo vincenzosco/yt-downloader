@@ -32,7 +32,8 @@
       'formats-err': 'formati: {0}',
       'download-err': 'Download: {0}',
       'backup-open': 'apri y2mate.vet',
-      'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet: incolla lì il link del video e scarica.',
+      'backup-open2': 'apri ytdown.tools',
+      'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet o ytdown.tools: incolla lì il link del video e scarica.',
       'info-err': 'info video: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
@@ -97,7 +98,8 @@
       'formats-err': 'formats: {0}',
       'download-err': 'Download: {0}',
       'backup-open': 'open y2mate.vet',
-      'backup-tip': 'All engines blocked? Open y2mate.vet, paste the video link there and download.',
+      'backup-open2': 'open ytdown.tools',
+      'backup-tip': 'All engines blocked? Open y2mate.vet or ytdown.tools, paste the video link there and download.',
       'info-err': 'video info: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
@@ -249,10 +251,11 @@
        - usa la prima viva, salvata anche in localStorage per ripartire subito
        - se un'istanza fallisce, la scarta e passa alle altre in automatico;
          se fallisce tutto Piped, pirotta su Invidious
-     Nel footer c'è anche y2mate.vet come backup manuale (apre il sito e
-     copia l'URL del video negli appunti): i suoi endpoint rifiutano le
-     richieste cross-origin (403 per qualunque Origin estraneo), quindi non
-     è integrabile come engine dal browser — solo come sito da aprire.
+     Nel footer ci sono anche y2mate.vet e ytdown.tools come backup manuali
+     (aprono il sito e copiano l'URL del video negli appunti): i loro
+     motori rifiutano le richieste cross-origin (403 per qualunque Origin
+     estraneo), quindi non sono integrabili come engine dal browser — solo
+     come siti da aprire.
      Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
      la pagina riprova da sola con attese crescenti e alla fine mostra un
      messaggio chiaro. */
@@ -1841,25 +1844,28 @@
       ev.preventDefault();
       doLink($('link-input').value);
     });
-    /* backup manuale: apre y2mate.vet e, se nel campo link c'è un URL
-       YouTube, lo copia negli appunti così l'utente lo incolla lì */
-    var backupBtn = $('btn-backup');
-    if (backupBtn) {
-      backupBtn.addEventListener('click', function () {
-        var u = $('link-input') ? $('link-input').value : '';
-        if (/youtube\.com\/watch\?v=|youtu\.be\//.test(u)) {
-          try {
-            var ta = document.createElement('textarea');
-            ta.value = u;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-          } catch (e) { /* appunti non disponibili: incolla a mano */ }
-        }
-      });
+    /* backup manuale: i link del footer (y2mate.vet, ytdown.tools) aprono
+       il sito; se nel campo link c'è un URL YouTube, lo copiano negli
+       appunti così l'utente lo incolla lì */
+    var backupBtns = document.querySelectorAll('.backup-btn');
+    for (var b = 0; b < backupBtns.length; b++) {
+      (function (btn) {
+        btn.addEventListener('click', function () {
+          var u = $('link-input') ? $('link-input').value : '';
+          if (/youtube\.com\/watch\?v=|youtu\.be\//.test(u)) {
+            try {
+              var ta = document.createElement('textarea');
+              ta.value = u;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+            } catch (e) { /* appunti non disponibili: incolla a mano */ }
+          }
+        });
+      })(backupBtns[b]);
     }
   }
 

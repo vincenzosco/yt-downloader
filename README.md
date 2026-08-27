@@ -52,9 +52,10 @@ intermittente** (anti-bot). La pagina gestisce da sola la cosa:
 - se un'istanza fallisce, la scarta e **passa alle altre in automatico**;
 - se **tutto Piped fallisce**, pirotta su **Invidious** come backend di
   riserva;
-- nel footer c'è **y2mate.vet come backup manuale**: un click apre il sito
-  (e copia negli appunti l'URL del video se è nel campo link), così se
-  tutti gli engine automatici sono bloccati puoi scaricare lì;
+- nel footer ci sono **y2mate.vet e ytdown.tools come backup manuali**: un
+  click apre il sito (e copia negli appunti l'URL del video se è nel campo
+  link), così se tutti gli engine automatici sono bloccati puoi scaricare
+  lì;
 - **scarica a runtime le liste ufficiali** (TeamPiped documentation e
   api.invidious.io) così se spunta una nuova istanza viva la pagina la
   scopre da sola, senza aggiornare il codice;
@@ -75,12 +76,14 @@ intermittente le istanze pubbliche gratuite. Per questo:
   Nei momenti di blocco la pagina ritenta da sola e poi chiede di riprovare.
 - **Playlist**: l'estrazione dipende dall'istanza; se bloccata la pagina
   mostra un messaggio esplicito.
-- **Backup manuale**: y2mate.vet è nel footer come riserva "umana":
-  quando tutti gli engine automatici sono bloccati, un click apre il sito
-  e lì incolli il link e scarichi. Non è un'API: ho verificato che i suoi
-  endpoint (il motore flvto.top) **rifiutano le richieste cross-origin**
-  (rispondono 403 a qualunque Origin che non sia il loro), quindi dal
-  browser non è integrabile come engine — solo come sito da aprire.
+- **Backup manuali**: y2mate.vet e ytdown.tools sono nel footer come
+  riserve "umane": quando tutti gli engine automatici sono bloccati, un
+  click apre il sito e lì incolli il link e scarichi. Non sono API: ho
+  verificato che i loro motori (flvto.top per y2mate.vet, yt2api.com per
+  ytdown.tools) **rifiutano le richieste cross-origin** (rispondono 403 a
+  qualunque Origin che non sia il proprio, e i token JWT sono legati
+  all'origin), quindi dal browser non sono integrabili come engine — solo
+  come siti da aprire.
 - **Backend di riserva**: Invidious è incluso come fallback, ma **oggi le
   sue istanze pubbliche non danno CORS permissivo né rispondono** (YouTube
   le blocca con 403/401) — è codice pronto che si attiva da solo appena una
@@ -186,9 +189,10 @@ Public instances get **blocked/changed by YouTube intermittently**
   automatically**;
 - if **all of Piped fails**, it fails over to **Invidious** as a reserve
   backend;
-- the footer has **y2mate.vet as a manual backup**: one click opens the
-  site (and copies the video URL to the clipboard if it is in the link
-  field), so if all automatic engines are blocked you can download there;
+- the footer has **y2mate.vet and ytdown.tools as manual backups**: one
+  click opens the site (and copies the video URL to the clipboard if it is
+  in the link field), so if all automatic engines are blocked you can
+  download there;
 - **downloads the official instance lists at runtime** (TeamPiped
   documentation and api.invidious.io), so if a new alive instance appears
   the page discovers it by itself, without a code update;
@@ -209,12 +213,14 @@ blocks free public instances. Therefore:
   block windows the page retries by itself, then asks you to retry later.
 - **Playlists**: extraction depends on the instance; if blocked, the page
   shows an explicit message.
-- **Manual backup**: y2mate.vet is in the footer as a “human” reserve:
-  when all automatic engines are blocked, one click opens the site and you
-  paste the link there and download. It is not an API: I verified its
-  endpoints (the flvto.top engine) **reject cross-origin requests** (they
-  answer 403 to any Origin that is not their own), so from the browser it
-  cannot be integrated as an engine — only as a site to open.
+- **Manual backups**: y2mate.vet and ytdown.tools are in the footer as
+  “human” reserves: when all automatic engines are blocked, one click
+  opens the site and you paste the link there and download. They are not
+  APIs: I verified their engines (flvto.top for y2mate.vet, yt2api.com for
+  ytdown.tools) **reject cross-origin requests** (they answer 403 to any
+  Origin that is not their own, and the JWT tokens are tied to the
+  origin), so from the browser they cannot be integrated as engines — only
+  as sites to open.
 - **Reserve backend**: Invidious is included as a fallback, but **today its
   public instances do not grant permissive CORS nor respond** (YouTube
   blocks them with 403/401) — ready code that activates on its own as soon
