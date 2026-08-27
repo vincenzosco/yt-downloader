@@ -47,8 +47,11 @@ Il browser non può leggere la risposta SSE di ytdlp.online (nessun header
 CORS), quindi la pagina passa da un **pool di proxy CORS pubblici**. La
 pagina gestisce da sola tutta la resilienza:
 
-- **Pool di proxy** (`YTDLP_PROXIES` in `app.js`) verificati con **health
-  check** ogni 6 minuti, usando il primo vivo (ricordato in `localStorage`);
+- **Pool di proxy** (`YTDLP_PROXIES` in `app.js`): corsproxy.io, cors.io,
+  api.allorigins.win, api.codetabs.com, api.cors.lol, cors.eu.org,
+  test.cors.workers.dev — verificati con **health check** ogni 6 minuti,
+  usando il primo vivo (ricordato in `localStorage`); cors.io risponde in
+  JSON (il tool lo gestisce: estrae il body);
 - **Rotazione automatica**: ogni proxy ha un IP diverso → **quota giornaliera
   separata** (ytdlp.online concede ~5 task/giorno per IP). Se un proxy è a
   quota o fallisce, la pagina **passa al successivo in automatico** e lo
@@ -184,8 +187,11 @@ The browser cannot read ytdlp.online's SSE response (no CORS headers), so the
 page goes through a **pool of public CORS proxies**. The page handles all the
 resilience by itself:
 
-- **Proxy pool** (`YTDLP_PROXIES` in `app.js`) **health-checked** every 6
-  minutes, using the first alive one (remembered in `localStorage`);
+- **Proxy pool** (`YTDLP_PROXIES` in `app.js`): corsproxy.io, cors.io,
+  api.allorigins.win, api.codetabs.com, api.cors.lol, cors.eu.org,
+  test.cors.workers.dev — **health-checked** every 6 minutes, using the
+  first alive one (remembered in `localStorage`); cors.io replies in JSON
+  (the tool handles it: it extracts the body);
 - **Automatic rotation**: each proxy has a different IP → **separate daily
   quota** (ytdlp.online allows ~5 tasks/day per IP). If a proxy is at quota
   or fails, the page **moves to the next one automatically** and remembers it

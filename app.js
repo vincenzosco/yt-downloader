@@ -268,14 +268,35 @@
      i più affidabili in cima. */
   var YTDLP_PROXIES = [
     'https://corsproxy.io/?url=',
+    'https://cors.io/?url=',
     'https://api.allorigins.win/raw?url=',
     'https://api.codetabs.com/v1/proxy?quest=',
-    'https://cors.lol/?url=',
     'https://api.cors.lol/?url=',
     'https://cors.eu.org/?url=',
-    'https://whateverorigin.org/get?url=',
     'https://test.cors.workers.dev/?url='
   ];
+  /* Formato della risposta di ogni proxy (per il parsing):
+       'raw'    = testo SSE diretto (corsproxy.io, allorigins/raw, codetabs)
+       'wrap'   = JSON { status, body, ... } con l'SSE in .body (cors.io)
+     Il probe e ytdlpRun usano il formato per estrarre il contenuto giusto. */
+  var YTDLP_PROXY_FMT = {
+    'https://corsproxy.io/?url=': 'raw',
+    'https://cors.io/?url=': 'wrap',
+    'https://api.allorigins.win/raw?url=': 'raw',
+    'https://api.codetabs.com/v1/proxy?quest=': 'raw',
+    'https://api.cors.lol/?url=': 'raw',
+    'https://cors.eu.org/?url=': 'raw',
+    'https://test.cors.workers.dev/?url=': 'raw'
+  };
+  /* se il proxy risponde in JSON (wrapper), estrae il testo dentro .body */
+  function proxyUnwrap(p, text) {
+    if (YTDLP_PROXY_FMT[p] !== 'wrap') return text;
+    try {
+      var j = JSON.parse(String(text || ''));
+      if (j && typeof j.body === 'string') return j.body;
+    } catch (e) { /* non JSON: usa il testo grezzo */ }
+    return text;
+  }
   var PROXY_TTL = 6 * 60 * 1000;   /* ricontrolla i proxy ogni 6 min */
   var PROXY_KEY = 'ytd.proxy';
   var proxyGood = '';              /* proxy in uso (l'ultimo che ha funzionato) */
@@ -303,6 +324,8 @@
     x.timeout = 10000;
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
+      /* per i wrapper JSON (cors.io) la risposta arriva comunque 200 con
+         il body nel campo .body: conta lo stato HTTP del proxy */
       cb(x.status >= 200 && x.status < 400);
     };
     x.onerror = function () { cb(false); };
@@ -476,15 +499,19 @@
     add(proxyGood);
     for (var i = 0; i < YTDLP_PROXIES.length; i++) add(YTDLP_PROXIES[i]);
     var round = 0;
+    var sawLimit = false;
     (function next(idx, lastMsg) {
-      /* salta i proxy a quota (ricordati per 30 min) */
-      while (idx < order.length && !quotaOk(order[idx])) idx++;
+      /* salta i proxy a quota (ricordati per 30 min): se ne saltiamo almeno
+         uno sappiamo che il limite esiste (utile per il messaggio finale) */
+      while (idx < order.length && !quotaOk(order[idx])) { sawLimit = true; idx++; }
       if (idx >= order.length) {
         /* un giro completo fallito: riprova tutto un'altra volta (l'anti-bot
            è intermittente, in pochi secondi un proxy può sbloccarsi) */
         round++;
         if (round < 2) { setTimeout(function () { next(0, lastMsg); }, 3000); return; }
-        err(lastMsg || t('ytdlp-none'));
+        /* se almeno un proxy era a quota, il messaggio più utile è il limite
+           (i proxy vivi esistono, solo esauriti per oggi) */
+        err(sawLimit ? t('ytdlp-limit') : (lastMsg || t('ytdlp-none')));
         return;
       }
       var p = order[idx];
@@ -499,10 +526,11 @@
         x.onreadystatechange = function () {
           if (x.readyState !== 4) return;
           if (x.status >= 200 && x.status < 300) {
-            var obj = ytdlpParse(x.responseText || '');
+            var obj = ytdlpParse(proxyUnwrap(p, x.responseText || ''));
             if (!obj) { next(idx + 1, 'risposta non valida'); return; }
             if (obj.ytdlpLimit) {
               /* proxy vivo ma a quota: ricorda (30 min) e passa avanti */
+              sawLimit = true;
               quotaMark(p);
               proxyGood = p; proxySave(p);
               next(idx + 1, t('ytdlp-limit'));
@@ -510,7 +538,14 @@
             }
             proxyGood = p; proxySave(p);
             ok(obj);
-          } else fail(x.status === 0 ? 'network error' : 'errore ' + x.status);
+          } else {
+            /* errore HTTP rapido (4xx/5xx: proxy bloccato/rate-limit) =
+               proxy non usabile in questo momento: passa subito avanti,
+               niente retry lento. Solo timeout/network (status 0) hanno
+               senso di ritentare: può essere un rallentamento momentaneo. */
+            if (x.status === 0) fail('network error');
+            else next(idx + 1, 'errore ' + x.status);
+          }
         };
         x.onerror = function () { fail('network error'); };
         x.ontimeout = function () { fail('timeout'); };
