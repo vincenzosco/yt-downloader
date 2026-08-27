@@ -36,6 +36,8 @@
       'backup-open3': 'apri flvto.cyou',
       'backup-open4': 'apri ytdlp.online',
       'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet, ytdown.tools, flvto.cyou o ytdlp.online: incolla lì il link del video e scarica.',
+      'widget-open': '🎯 scarica con widget ytdown.tools',
+      'widget-close': 'chiudi widget',
       'open-manually': 'Questo formato si apre in una nuova scheda: se il download non parte, clicca con il tasto destro e “Salva con nome”.',
       'ytdlp-limit': 'ytdlp.online ha raggiunto il limite giornaliero di conversioni gratuite: riprova domani (o usa gli altri engine).',
       'info-err': 'info video: {0}',
@@ -106,6 +108,8 @@
       'backup-open3': 'open flvto.cyou',
       'backup-open4': 'open ytdlp.online',
       'backup-tip': 'All engines blocked? Open y2mate.vet, ytdown.tools, flvto.cyou or ytdlp.online, paste the video link there and download.',
+      'widget-open': '🎯 download with ytdown.tools widget',
+      'widget-close': 'close widget',
       'open-manually': 'This format opens in a new tab: if the download does not start, right-click and “Save as”.',
       'ytdlp-limit': 'ytdlp.online reached its daily free-conversion limit: try again tomorrow (or use the other engines).',
       'info-err': 'video info: {0}',
@@ -1841,6 +1845,34 @@
         dl.textContent = t('download');
         var item = { id: vid, title: info.title || '', author: info.author || '' };
         bindDownload(card.querySelector('.card-body'), dl, item, t('download'), 'link-status', fmts);
+
+        /* widget ytdown.tools (bestapi.cc): i formati girano dentro il
+           widget stesso (frame-ancestors *), niente CORS da gestire —
+           funziona anche quando tutti gli engine sono bloccati */
+        var wg = document.createElement('button');
+        wg.type = 'button';
+        wg.className = 'btn';
+        wg.textContent = t('widget-open');
+        actions.appendChild(wg);
+        wg.addEventListener('click', function () {
+          if (previewWrap.querySelector('iframe')) {
+            previewWrap.innerHTML = '';
+            wg.textContent = t('widget-open');
+            return;
+          }
+          var f = document.createElement('iframe');
+          f.className = 'widget-frame';
+          f.src = 'https://bestapi.cc/widget/panel-plus/' + encodeURIComponent(vid) + '/light';
+          f.setAttribute('allowtransparency', 'true');
+          f.setAttribute('scrolling', 'no');
+          f.style.border = 'none';
+          f.style.width = '100%';
+          f.style.height = '540px';
+          f.style.display = 'block';
+          previewWrap.innerHTML = '';
+          previewWrap.appendChild(f);
+          wg.textContent = t('widget-close');
+        });
       },
       function (msg) {
         setStatus('link-status', tF('formats-err', friendlyMsg(pipedErrMsg(msg))), true);

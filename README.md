@@ -85,6 +85,12 @@ intermittente le istanze pubbliche gratuite. Per questo:
   completo di yt-dlp con 49 formati). Limiti verificati: **~5 task/giorno
   per utenti anonimi** (messaggio chiaro quando si esaurisce) e i formati
   hanno URL googlevideo senza CORS → il download si apre in una scheda.
+- **Widget ytdown.tools (bestapi.cc)**: nel pannello “Incolla link”, per un
+  video c'è il pulsante **🎯 scarica con widget ytdown.tools** che apre in
+  un iframe il widget di bestapi.cc (`frame-ancestors *`, verificato nel
+  browser: mostra i formati MP3/MP4 con i pulsanti di conversione).
+  Funziona sempre: i formati girano dentro il widget, nessun CORS da
+  gestire.
 - **Backup manuali**: y2mate.vet, ytdown.tools, flvto.cyou e ytdlp.online
   sono nel footer come riserve "umane". Non sono API: ho verificato che i
   loro motori (flvto.top per y2mate.vet, yt2api.com per ytdown.tools,
@@ -229,6 +235,11 @@ blocks free public instances. Therefore:
   with 49 formats). Verified limits: **~5 tasks/day for anonymous users**
   (clear message when exhausted) and the formats are googlevideo URLs
   without CORS → the download opens in a tab.
+- **ytdown.tools widget (bestapi.cc)**: in the “Paste link” panel, for a
+  video there is a **🎯 download with ytdown.tools widget** button that
+  opens the bestapi.cc widget in an iframe (`frame-ancestors *`, verified
+  in a real browser: it shows the MP3/MP4 formats with convert buttons).
+  It always works: the formats run inside the widget, no CORS to handle.
 - **Manual backups**: y2mate.vet, ytdown.tools, flvto.cyou and
   ytdlp.online are in the footer as “human” reserves. They are not APIs:
   I verified their engines (flvto.top for y2mate.vet, yt2api.com for
