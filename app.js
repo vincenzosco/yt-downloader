@@ -31,6 +31,8 @@
       'search-err': 'ricerca: {0}',
       'formats-err': 'formati: {0}',
       'download-err': 'Download: {0}',
+      'backup-open': 'apri y2mate.vet',
+      'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet: incolla lì il link del video e scarica.',
       'info-err': 'info video: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
@@ -94,6 +96,8 @@
       'search-err': 'search: {0}',
       'formats-err': 'formats: {0}',
       'download-err': 'Download: {0}',
+      'backup-open': 'open y2mate.vet',
+      'backup-tip': 'All engines blocked? Open y2mate.vet, paste the video link there and download.',
       'info-err': 'video info: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
@@ -245,6 +249,10 @@
        - usa la prima viva, salvata anche in localStorage per ripartire subito
        - se un'istanza fallisce, la scarta e passa alle altre in automatico;
          se fallisce tutto Piped, pirotta su Invidious
+     Nel footer c'è anche y2mate.vet come backup manuale (apre il sito e
+     copia l'URL del video negli appunti): i suoi endpoint rifiutano le
+     richieste cross-origin (403 per qualunque Origin estraneo), quindi non
+     è integrabile come engine dal browser — solo come sito da aprire.
      Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
      la pagina riprova da sola con attese crescenti e alla fine mostra un
      messaggio chiaro. */
@@ -712,26 +720,31 @@
      istanza viva o tutte bloccate), pirotta su Invidious. Così la pagina ha
      due famiglie di API e passa da una all'altra in automatico. */
 
-  function runBoth(o, fallback, ok, err) {
-    o(function (val) { ok(val); }, function (msg) {
-      /* Piped fallito: proviamo Invidious */
-      fallback(function (val2) { ok(val2); }, function (msg2) {
-        err(msg2 || msg || t('piped-none'));
-      });
-    });
+  function runChain(ops, ok, err) {
+    var i = 0;
+    (function next(lastMsg) {
+      if (i >= ops.length) { err(lastMsg || t('piped-none')); return; }
+      ops[i++](function (val) { ok(val); }, function (msg) { next(msg); });
+    })();
   }
 
   function ytSearch(q, ok, err) {
-    runBoth(function (o, e) { pipedSearch(q, o, e); },
-      function (o, e) { invidSearch(q, o, e); }, ok, err);
+    runChain([
+      function (o, e) { pipedSearch(q, o, e); },
+      function (o, e) { invidSearch(q, o, e); }
+    ], ok, err);
   }
   function ytFormats(id, ok, err) {
-    runBoth(function (o, e) { pipedFormats(id, o, e); },
-      function (o, e) { invidFormats(id, o, e); }, ok, err);
+    runChain([
+      function (o, e) { pipedFormats(id, o, e); },
+      function (o, e) { invidFormats(id, o, e); }
+    ], ok, err);
   }
   function ytPlaylist(list, ok, err) {
-    runBoth(function (o, e) { pipedPlaylist(list, o, e); },
-      function (o, e) { invidPlaylist(list, o, e); }, ok, err);
+    runChain([
+      function (o, e) { pipedPlaylist(list, o, e); },
+      function (o, e) { invidPlaylist(list, o, e); }
+    ], ok, err);
   }
 
   function pipedPlaylist(list, ok, err) {
@@ -1828,6 +1841,26 @@
       ev.preventDefault();
       doLink($('link-input').value);
     });
+    /* backup manuale: apre y2mate.vet e, se nel campo link c'è un URL
+       YouTube, lo copia negli appunti così l'utente lo incolla lì */
+    var backupBtn = $('btn-backup');
+    if (backupBtn) {
+      backupBtn.addEventListener('click', function () {
+        var u = $('link-input') ? $('link-input').value : '';
+        if (/youtube\.com\/watch\?v=|youtu\.be\//.test(u)) {
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = u;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          } catch (e) { /* appunti non disponibili: incolla a mano */ }
+        }
+      });
+    }
   }
 
   if (document.readyState === 'loading') {
