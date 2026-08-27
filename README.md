@@ -46,12 +46,13 @@ download
 Le istanze pubbliche vengono **bloccate/cambiate da YouTube in modo
 intermittente** (anti-bot). La pagina gestisce da sola la cosa:
 
-- tiene un **pool di istanze** di **due backend** (Piped + Invidious) e le
-  **verifica** (health check) ogni 5 minuti, usando la prima viva (ricordata
-  in `localStorage` per ripartire subito);
+- tiene un **pool di istanze** di **tre backend** (Piped + YTDLP +
+  Invidious) e le **verifica** (health check) ogni 5 minuti, usando la
+  prima viva (ricordata in `localStorage` per ripartire subito);
 - se un'istanza fallisce, la scarta e **passa alle altre in automatico**;
-- se **tutto Piped fallisce**, pirotta su **Invidious** come backend di
-  riserva;
+- se **tutto Piped fallisce**, pirotta su **YTDLP** (yt-dlp server-side di
+  ytdlp.online, raggiunto via proxy CORS pubblico — vedi sotto) e infine
+  su **Invidious** come riserva;
 - nel footer ci sono **y2mate.vet, ytdown.tools, flvto.cyou e ytdlp.online
   come backup manuali**: un click apre il sito (e copia negli appunti
   l'URL del video se è nel campo link; ytdlp.online lo precompila pure col
@@ -77,16 +78,19 @@ intermittente le istanze pubbliche gratuite. Per questo:
   Nei momenti di blocco la pagina ritenta da sola e poi chiede di riprovare.
 - **Playlist**: l'estrazione dipende dall'istanza; se bloccata la pagina
   mostra un messaggio esplicito.
+- **Engine YTDLP (riserva)**: ytdlp.online gira yt-dlp server-side e
+  streama l'output via SSE su `/api/v1/stream`. Il browser non può leggere
+  l'SSE (nessun header CORS), quindi la pagina passa da **corsproxy.io**
+  (proxy CORS pubblico, verificato dal vivo: `-J` restituisce il JSON
+  completo di yt-dlp con 49 formati). Limiti verificati: **~5 task/giorno
+  per utenti anonimi** (messaggio chiaro quando si esaurisce) e i formati
+  hanno URL googlevideo senza CORS → il download si apre in una scheda.
 - **Backup manuali**: y2mate.vet, ytdown.tools, flvto.cyou e ytdlp.online
-  sono nel footer come riserve "umane": quando tutti gli engine automatici
-  sono bloccati, un click apre il sito e lì incolli il link e scarichi.
-  Non sono API: ho verificato che i loro motori (flvto.top per
-  y2mate.vet, yt2api.com per ytdown.tools, flvto.com.im per flvto.cyou,
-  yt-dlp server-side su /api/v1/stream per ytdlp.online) **rifiutano le
-  richieste cross-origin** (403 a qualunque Origin che non sia il proprio,
-  token JWT legati all'origin, nessun header CORS, oppure SSE non
-  leggibile dal browser — verificato dal vivo), quindi dal browser non
-  sono integrabili come engine — solo come siti da aprire.
+  sono nel footer come riserve "umane". Non sono API: ho verificato che i
+  loro motori (flvto.top per y2mate.vet, yt2api.com per ytdown.tools,
+  flvto.com.im per flvto.cyou) **rifiutano le richieste cross-origin**
+  (403 a qualunque Origin che non sia il proprio o IP dei proxy bloccato),
+  quindi dal browser restano solo come siti da aprire.
 - **Backend di riserva**: Invidious è incluso come fallback, ma **oggi le
   sue istanze pubbliche non danno CORS permissivo né rispondono** (YouTube
   le blocca con 403/401) — è codice pronto che si attiva da solo appena una
@@ -185,13 +189,14 @@ download
 Public instances get **blocked/changed by YouTube intermittently**
 (anti-bot). The page handles it by itself:
 
-- keeps a **pool of instances from two backends** (Piped + Invidious) and
-  **health-checks** them every 5 minutes, using the first alive one
-  (remembered in `localStorage` to start fast);
+- keeps a **pool of instances from three backends** (Piped + YTDLP +
+  Invidious) and **health-checks** them every 5 minutes, using the first
+  alive one (remembered in `localStorage` to start fast);
 - if an instance fails, it discards it and **falls through to the others
   automatically**;
-- if **all of Piped fails**, it fails over to **Invidious** as a reserve
-  backend;
+- if **all of Piped fails**, it fails over to **YTDLP** (yt-dlp on
+  ytdlp.online, reached through a public CORS proxy — see below) and
+  finally to **Invidious** as a reserve;
 - the footer has **y2mate.vet, ytdown.tools, flvto.cyou and ytdlp.online
   as manual backups**: one click opens the site (and copies the video URL
   to the clipboard if it is in the link field; ytdlp.online even prefills
@@ -217,16 +222,19 @@ blocks free public instances. Therefore:
   block windows the page retries by itself, then asks you to retry later.
 - **Playlists**: extraction depends on the instance; if blocked, the page
   shows an explicit message.
+- **YTDLP engine (reserve)**: ytdlp.online runs yt-dlp server-side and
+  streams the output via SSE on `/api/v1/stream`. The browser cannot read
+  the SSE (no CORS headers), so the page goes through **corsproxy.io**
+  (public CORS proxy, verified live: `-J` returns the full yt-dlp JSON
+  with 49 formats). Verified limits: **~5 tasks/day for anonymous users**
+  (clear message when exhausted) and the formats are googlevideo URLs
+  without CORS → the download opens in a tab.
 - **Manual backups**: y2mate.vet, ytdown.tools, flvto.cyou and
-  ytdlp.online are in the footer as “human” reserves: when all automatic
-  engines are blocked, one click opens the site and you paste the link
-  there and download. They are not APIs: I verified their engines
-  (flvto.top for y2mate.vet, yt2api.com for ytdown.tools, flvto.com.im for
-  flvto.cyou, server-side yt-dlp on /api/v1/stream for ytdlp.online)
-  **reject cross-origin requests** (403 to any Origin that is not their
-  own, JWT tokens tied to the origin, no CORS headers, or SSE unreadable
-  from the browser — verified live), so from the browser they cannot be
-  integrated as engines — only as sites to open.
+  ytdlp.online are in the footer as “human” reserves. They are not APIs:
+  I verified their engines (flvto.top for y2mate.vet, yt2api.com for
+  ytdown.tools, flvto.com.im for flvto.cyou) **reject cross-origin
+  requests** (403 to any Origin that is not their own or blocked proxy
+  IPs), so from the browser they remain only as sites to open.
 - **Reserve backend**: Invidious is included as a fallback, but **today its
   public instances do not grant permissive CORS nor respond** (YouTube
   blocks them with 403/401) — ready code that activates on its own as soon

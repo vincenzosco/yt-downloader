@@ -36,6 +36,8 @@
       'backup-open3': 'apri flvto.cyou',
       'backup-open4': 'apri ytdlp.online',
       'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet, ytdown.tools, flvto.cyou o ytdlp.online: incolla lì il link del video e scarica.',
+      'open-manually': 'Questo formato si apre in una nuova scheda: se il download non parte, clicca con il tasto destro e “Salva con nome”.',
+      'ytdlp-limit': 'ytdlp.online ha raggiunto il limite giornaliero di conversioni gratuite: riprova domani (o usa gli altri engine).',
       'info-err': 'info video: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
@@ -104,6 +106,8 @@
       'backup-open3': 'open flvto.cyou',
       'backup-open4': 'open ytdlp.online',
       'backup-tip': 'All engines blocked? Open y2mate.vet, ytdown.tools, flvto.cyou or ytdlp.online, paste the video link there and download.',
+      'open-manually': 'This format opens in a new tab: if the download does not start, right-click and “Save as”.',
+      'ytdlp-limit': 'ytdlp.online reached its daily free-conversion limit: try again tomorrow (or use the other engines).',
       'info-err': 'video info: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
@@ -723,10 +727,11 @@
     return null;
   }
 
-  /* ---------- dispatch: Piped prima, poi Invidious ----------
+  /* ---------- dispatch: Piped prima, poi YTDLP, poi Invidious ----------
      Ogni operazione prova il backend Piped; se TUTTO Piped fallisce (nessuna
-     istanza viva o tutte bloccate), pirotta su Invidious. Così la pagina ha
-     due famiglie di API e passa da una all'altra in automatico. */
+     istanza viva o tutte bloccate), pirotta su YTDLP (yt-dlp server-side via
+     proxy CORS) e infine su Invidious. Così la pagina ha tre famiglie di
+     API e passa da una all'altra in automatico. */
 
   function runChain(ops, ok, err) {
     var i = 0;
@@ -739,18 +744,21 @@
   function ytSearch(q, ok, err) {
     runChain([
       function (o, e) { pipedSearch(q, o, e); },
+      function (o, e) { ytdlpSearch(q, o, e); },
       function (o, e) { invidSearch(q, o, e); }
     ], ok, err);
   }
   function ytFormats(id, ok, err) {
     runChain([
       function (o, e) { pipedFormats(id, o, e); },
+      function (o, e) { ytdlpFormats(id, o, e); },
       function (o, e) { invidFormats(id, o, e); }
     ], ok, err);
   }
   function ytPlaylist(list, ok, err) {
     runChain([
       function (o, e) { pipedPlaylist(list, o, e); },
+      function (o, e) { ytdlpPlaylist(list, o, e); },
       function (o, e) { invidPlaylist(list, o, e); }
     ], ok, err);
   }
@@ -899,6 +907,172 @@
     }, err, 3);
   }
 
+  /* ---------- engine di riserva YTDLP (yt-dlp server-side via proxy CORS) ----------
+     ytdlp.online gira yt-dlp lato server e streama l'output via SSE su
+     /api/v1/stream. Il browser non può leggere l'SSE (nessun header CORS),
+     quindi si passa da un proxy CORS pubblico (corsproxy.io) che inoltra la
+     risposta e aggiunge gli header. Con "-J" yt-dlp stampa il JSON dei
+     formati e chiude la connessione da solo in pochi secondi: la risposta è
+     breve, quindi il proxy la gestisce (lo streaming lungo no).
+     Nota: ytdlp.online ha un limite di ~5 task/giorno per utenti anonimi
+     (verificato dal vivo): è una riserva di emergenza, non l'engine
+     principale. I formati hanno URL googlevideo senza CORS: si scaricano
+     aprendoli in una scheda (flag direct). */
+
+  var YTDLP_STREAM = 'https://ytdlp.online/api/v1/stream';
+  var YTDLP_PROXIES = ['https://corsproxy.io/?url='];
+
+  function ytdlpJobId() {
+    return 'job-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+  }
+
+  /* decodifica le entità HTML dell'SSE (yt-dlp esce con &quot; ecc.) */
+  function ytdlpHtmlDecode(s) {
+    return String(s)
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ');
+  }
+
+  /* estrae il JSON di yt-dlp dall'output SSE (righe "data: ") */
+  function ytdlpParse(text) {
+    var joined = '';
+    var lines = String(text || '').split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].indexOf('data: ') === 0) joined += lines[i].substring(6);
+    }
+    if (/daily launch limit|rate limit|too many/i.test(joined)) return { ytdlpLimit: true };
+    var start = joined.indexOf('{');
+    if (start === -1) return null;
+    for (var end = start + 1; end < joined.length; end++) {
+      if (joined.charAt(end) !== '}') continue;
+      try {
+        var obj = JSON.parse(ytdlpHtmlDecode(joined.substring(start, end + 1)));
+        if (obj && typeof obj === 'object' && (obj.formats || obj.entries)) return obj;
+      } catch (e) { /* chiude più avanti */ }
+    }
+    return null;
+  }
+
+  /* esegue un comando yt-dlp via proxy CORS e restituisce il JSON (-J) */
+  function ytdlpRun(command, ok, err, attempts) {
+    var maxA = attempts || 3;
+    var n = 0;
+    (function go() {
+      n++;
+      var url = YTDLP_STREAM + '?command=' + encodeURIComponent(command) +
+        '&job_id=' + ytdlpJobId() + '&source=index&engine=stable';
+      var x = new XMLHttpRequest();
+      x.open('GET', YTDLP_PROXIES[0] + encodeURIComponent(url), true);
+      x.timeout = 50000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        if (x.status >= 200 && x.status < 300) {
+          var obj = ytdlpParse(x.responseText || '');
+          if (!obj) { retry('risposta non valida'); return; }
+          ok(obj);
+        } else retry(x.status === 0 ? 'network error' : 'errore ' + x.status);
+      };
+      x.onerror = function () { retry('network error'); };
+      x.ontimeout = function () { retry('timeout'); };
+      function retry(msg) {
+        if (n < maxA) setTimeout(go, 3500 * n); else err(msg);
+      }
+      x.send();
+    })();
+  }
+
+  /* normalizza un item della ricerca/playlist di yt-dlp (-J --flat-playlist) */
+  function ytdlpItem(e) {
+    var thumbs = (e && e.thumbnails) || [];
+    var t = '';
+    for (var i = 0; i < thumbs.length; i++) if (thumbs[i] && thumbs[i].url) { t = thumbs[i].url; break; }
+    return {
+      id: e.id || '',
+      title: e.title || '',
+      author: e.channel || e.uploader || '',
+      duration: fmtDur(e.duration),
+      views: fmtViews(e.view_count),
+      thumb: t || thumbFor(e.id)
+    };
+  }
+
+  function ytdlpSearch(q, ok, err) {
+    ytdlpRun('ytsearch8:' + q + ' -J --flat-playlist', function (obj) {
+      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
+      var entries = (obj && obj.entries) || [];
+      var out = [];
+      for (var i = 0; i < entries.length; i++) {
+        var it = ytdlpItem(entries[i]);
+        if (it.id) out.push(it);
+      }
+      ok(out);
+    }, err, 3);
+  }
+
+  function ytdlpFormats(id, ok, err) {
+    ytdlpRun('https://youtu.be/' + id + ' -J --no-playlist', function (obj) {
+      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
+      var audio = [], progressive = [], video = [];
+      var fmts = (obj && obj.formats) || [];
+      for (var i = 0; i < fmts.length; i++) {
+        var f = fmts[i];
+        if (!f || !f.url) continue;
+        var vc = String(f.vcodec || 'none');
+        var ac = String(f.acodec || 'none');
+        var isAudio = (vc === 'none' && ac !== 'none');
+        var isVideo = (ac === 'none' && vc !== 'none');
+        var h = parseInt(f.height, 10) || 0;
+        var kbps = Math.round(parseFloat(f.abr) || 0);
+        var label;
+        if (isAudio) label = kbps > 0 ? kbps + ' kbps' : (f.ext || 'audio');
+        else label = h > 0 ? h + 'p' : (f.format_note || 'video');
+        var fmt = {
+          itag: String(f.format_id || i),
+          label: label,
+          mime: 'video/' + (f.ext || 'mp4'),
+          size: parseInt(f.filesize || f.filesize_approx, 10) || 0,
+          url: f.url,
+          height: h,
+          kbps: kbps,
+          direct: true
+        };
+        if (isAudio) audio.push(fmt);
+        else if (isVideo) video.push(fmt);
+        else progressive.push(fmt);
+      }
+      audio.sort(byKbps);
+      progressive.sort(byHeight);
+      video.sort(byHeight);
+      ok({
+        info: {
+          id: id,
+          title: obj.title || '',
+          author: obj.channel || obj.uploader || '',
+          seconds: obj.duration || 0,
+          thumb: ((obj.thumbnails && obj.thumbnails.length) ? obj.thumbnails[obj.thumbnails.length - 1].url : '') || thumbFor(id)
+        },
+        audio: audio, progressive: progressive, video: video
+      });
+    }, err, 3);
+  }
+
+  function ytdlpPlaylist(list, ok, err) {
+    ytdlpRun('https://www.youtube.com/playlist?list=' + list + ' -J --flat-playlist', function (obj) {
+      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
+      var entries = (obj && obj.entries) || [];
+      var out = [];
+      for (var i = 0; i < entries.length; i++) {
+        var it = ytdlpItem(entries[i]);
+        if (it.id) out.push(it);
+      }
+      ok({ name: (obj && obj.title) || '', items: out });
+    }, err, 3);
+  }
+
   /* scarica i byte di uno stream (URL diretto Piped/Invidious, CORS permissivo) */
   function xhrBlobUrl(url, ok, err, onProgress) {
     var x = new XMLHttpRequest();
@@ -920,7 +1094,8 @@
     if (!el) return;
     if (pipedBase) {
       var host = pipedBase.replace(/^https?:\/\//, '').split('/')[0];
-      var extra = (invidBase && invidBase !== pipedBase) ? ' \u00B7 +Invidious' : '';
+      var extra = ' \u00B7 +ytdlp';
+      if (invidBase && invidBase !== pipedBase) extra += ' \u00B7 +Invidious';
       el.textContent = t('piped-label') + ' \u00B7 ' + host + extra;
     } else {
       el.textContent = t('piped-checking');
@@ -1103,7 +1278,8 @@
         o.setAttribute('data-fmt', JSON.stringify({
           url: list[i].url,
           mime: list[i].mime || '',
-          ext: extForMime(list[i].mime || '')
+          ext: extForMime(list[i].mime || ''),
+          direct: !!list[i].direct
         }));
         g.appendChild(o);
       }
@@ -1150,6 +1326,13 @@
     var title = item.title || item.id;
     if (!fmt || !fmt.url) {
       setStatus(statusId || 'search-status', tF('download-err', t('zip-unavailable')), true);
+      return;
+    }
+    /* formati "direct" (es. gli URL googlevideo dell'engine YTDLP): niente
+       CORS per il download via XHR, si aprono in una scheda */
+    if (fmt.direct) {
+      var w = window.open(fmt.url, '_blank');
+      if (!w) setStatus(statusId || 'search-status', t('open-manually'), true);
       return;
     }
     var ext = fmt.ext || extForMime(fmt.mime || '');
