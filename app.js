@@ -31,11 +31,6 @@
       'search-err': 'ricerca: {0}',
       'formats-err': 'formati: {0}',
       'download-err': 'Download: {0}',
-      'backup-open': 'apri y2mate.vet',
-      'backup-open2': 'apri ytdown.tools',
-      'backup-open3': 'apri flvto.cyou',
-      'backup-open4': 'apri ytdlp.online',
-      'backup-tip': 'Tutti gli engine sono bloccati? Apri y2mate.vet, ytdown.tools, flvto.cyou o ytdlp.online: incolla lì il link del video e scarica.',
       'widget-open': '🎯 scarica con widget ytdown.tools',
       'widget-close': 'chiudi widget',
       'open-manually': 'Questo formato si apre in una nuova scheda: se il download non parte, clicca con il tasto destro e “Salva con nome”.',
@@ -103,11 +98,6 @@
       'search-err': 'search: {0}',
       'formats-err': 'formats: {0}',
       'download-err': 'Download: {0}',
-      'backup-open': 'open y2mate.vet',
-      'backup-open2': 'open ytdown.tools',
-      'backup-open3': 'open flvto.cyou',
-      'backup-open4': 'open ytdlp.online',
-      'backup-tip': 'All engines blocked? Open y2mate.vet, ytdown.tools, flvto.cyou or ytdlp.online, paste the video link there and download.',
       'widget-open': '🎯 download with ytdown.tools widget',
       'widget-close': 'close widget',
       'open-manually': 'This format opens in a new tab: if the download does not start, right-click and “Save as”.',
@@ -263,12 +253,6 @@
        - usa la prima viva, salvata anche in localStorage per ripartire subito
        - se un'istanza fallisce, la scarta e passa alle altre in automatico;
          se fallisce tutto Piped, pirotta su Invidious
-     Nel footer ci sono anche y2mate.vet, ytdown.tools, flvto.cyou e
-     ytdlp.online come backup manuali (aprono il sito e copiano l'URL del
-     video negli appunti; ytdlp.online precompila pure il campo con ?url=):
-     i loro motori rifiutano le richieste cross-origin (403 o niente header
-     CORS per qualunque Origin estraneo), quindi non sono integrabili come
-     engine dal browser — solo come siti da aprire.
      Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
      la pagina riprova da sola con attese crescenti e alla fine mostra un
      messaggio chiaro. */
@@ -2064,37 +2048,6 @@
       ev.preventDefault();
       doLink($('link-input').value);
     });
-    /* backup manuale: i link del footer (y2mate.vet, ytdown.tools,
-       flvto.cyou, ytdlp.online) aprono il sito; se nel campo link c'è un
-       URL YouTube, lo copiano negli appunti così l'utente lo incolla lì.
-       ytdlp.online supporta anche ?url= (precompila il campo): se c'è un
-       video, apriamo direttamente con il suo URL. */
-    var backupBtns = document.querySelectorAll('.backup-btn');
-    for (var b = 0; b < backupBtns.length; b++) {
-      (function (btn) {
-        btn.addEventListener('click', function (ev) {
-          var u = $('link-input') ? $('link-input').value : '';
-          var isUrl = /youtube\.com\/watch\?v=|youtu\.be\//.test(u);
-          if (btn.getAttribute('data-backup') === 'ytdlp' && isUrl) {
-            ev.preventDefault();
-            window.open('https://ytdlp.online/?url=' + encodeURIComponent(u), '_blank');
-            return;
-          }
-          if (isUrl) {
-            try {
-              var ta = document.createElement('textarea');
-              ta.value = u;
-              ta.style.position = 'fixed';
-              ta.style.opacity = '0';
-              document.body.appendChild(ta);
-              ta.select();
-              document.execCommand('copy');
-              document.body.removeChild(ta);
-            } catch (e) { /* appunti non disponibili: incolla a mano */ }
-          }
-        });
-      })(backupBtns[b]);
-    }
   }
 
   if (document.readyState === 'loading') {

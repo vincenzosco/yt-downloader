@@ -53,11 +53,6 @@ intermittente** (anti-bot). La pagina gestisce da sola la cosa:
 - se **tutto Piped fallisce**, pirotta su **YTDLP** (yt-dlp server-side di
   ytdlp.online, raggiunto via proxy CORS pubblico — vedi sotto) e infine
   su **Invidious** come riserva;
-- nel footer ci sono **y2mate.vet, ytdown.tools, flvto.cyou e ytdlp.online
-  come backup manuali**: un click apre il sito (e copia negli appunti
-  l'URL del video se è nel campo link; ytdlp.online lo precompila pure col
-  parametro `?url=`), così se tutti gli engine automatici sono bloccati
-  puoi scaricare lì;
 - **scarica a runtime le liste ufficiali** (TeamPiped documentation e
   api.invidious.io) così se spunta una nuova istanza viva la pagina la
   scopre da sola, senza aggiornare il codice;
@@ -91,12 +86,12 @@ intermittente le istanze pubbliche gratuite. Per questo:
   browser: mostra i formati MP3/MP4 con i pulsanti di conversione).
   Funziona sempre: i formati girano dentro il widget, nessun CORS da
   gestire.
-- **Backup manuali**: y2mate.vet, ytdown.tools, flvto.cyou e ytdlp.online
-  sono nel footer come riserve "umane". Non sono API: ho verificato che i
-  loro motori (flvto.top per y2mate.vet, yt2api.com per ytdown.tools,
-  flvto.com.im per flvto.cyou) **rifiutano le richieste cross-origin**
-  (403 a qualunque Origin che non sia il proprio o IP dei proxy bloccato),
-  quindi dal browser restano solo come siti da aprire.
+- **Altri siti (y2mate.vet, ytdown.tools, flvto.cyou, ytdlp.online)**: non
+  sono integrati come link nel footer. Ho verificato che i loro motori
+  (flvto.top per y2mate.vet, yt2api.com per ytdown.tools, flvto.com.im per
+  flvto.cyou) **rifiutano le richieste cross-origin** (403 a qualunque
+  Origin che non sia il proprio o IP dei proxy bloccato), quindi dal
+  browser restano solo come siti da aprire manualmente, se vuoi.
 - **Backend di riserva**: Invidious è incluso come fallback, ma **oggi le
   sue istanze pubbliche non danno CORS permissivo né rispondono** (YouTube
   le blocca con 403/401) — è codice pronto che si attiva da solo appena una
@@ -203,11 +198,6 @@ Public instances get **blocked/changed by YouTube intermittently**
 - if **all of Piped fails**, it fails over to **YTDLP** (yt-dlp on
   ytdlp.online, reached through a public CORS proxy — see below) and
   finally to **Invidious** as a reserve;
-- the footer has **y2mate.vet, ytdown.tools, flvto.cyou and ytdlp.online
-  as manual backups**: one click opens the site (and copies the video URL
-  to the clipboard if it is in the link field; ytdlp.online even prefills
-  it with the `?url=` parameter), so if all automatic engines are blocked
-  you can download there;
 - **downloads the official instance lists at runtime** (TeamPiped
   documentation and api.invidious.io), so if a new alive instance appears
   the page discovers it by itself, without a code update;
@@ -240,12 +230,12 @@ blocks free public instances. Therefore:
   opens the bestapi.cc widget in an iframe (`frame-ancestors *`, verified
   in a real browser: it shows the MP3/MP4 formats with convert buttons).
   It always works: the formats run inside the widget, no CORS to handle.
-- **Manual backups**: y2mate.vet, ytdown.tools, flvto.cyou and
-  ytdlp.online are in the footer as “human” reserves. They are not APIs:
-  I verified their engines (flvto.top for y2mate.vet, yt2api.com for
-  ytdown.tools, flvto.com.im for flvto.cyou) **reject cross-origin
-  requests** (403 to any Origin that is not their own or blocked proxy
-  IPs), so from the browser they remain only as sites to open.
+- **Other sites (y2mate.vet, ytdown.tools, flvto.cyou, ytdlp.online)**: not
+  integrated as footer links. I verified their engines (flvto.top for
+  y2mate.vet, yt2api.com for ytdown.tools, flvto.com.im for flvto.cyou)
+  **reject cross-origin requests** (403 to any Origin that is not their own
+  or blocked proxy IPs), so from the browser they remain only as sites to
+  open manually, if you want.
 - **Reserve backend**: Invidious is included as a fallback, but **today its
   public instances do not grant permissive CORS nor respond** (YouTube
   blocks them with 403/401) — ready code that activates on its own as soon
