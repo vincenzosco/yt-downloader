@@ -29,85 +29,78 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 ## Come funziona — zero server
 
-La pagina è **statica al 100%** (GitHub Pages) e parla **direttamente dal
-browser** con le **API pubbliche di Piped** (gratis, senza account, CORS
-permissivo). Non c'è un tuo server, non serve configurare nulla:
+La pagina è **statica al 100%** (GitHub Pages) e parla **dal browser** con
+**ytdlp.online** (yt-dlp server-side, gratis e senza account). Non c'è un tuo
+server, non serve configurare nulla:
 
 ```
 browser (pagina statica su GitHub Pages)
-   │  richieste dirette (CORS *) alle API pubbliche di Piped
+   │  richieste via proxy CORS pubblico (aggiunge gli header CORS)
    ▼
-istanza Piped pubblica → YouTube → URL audio/video
-   │  i byte scendono diretti al browser (proxy CORS di Piped)
+proxy CORS → ytdlp.online (yt-dlp server-side) → YouTube
+   │  URL audio/video diretti (googlevideo)
    ▼
-download
+download (si apre in una scheda)
 ```
 
-Le istanze pubbliche vengono **bloccate/cambiate da YouTube in modo
-intermittente** (anti-bot). La pagina gestisce da sola la cosa:
+Il browser non può leggere la risposta SSE di ytdlp.online (nessun header
+CORS), quindi la pagina passa da un **pool di proxy CORS pubblici**. La
+pagina gestisce da sola tutta la resilienza:
 
-- tiene un **pool di istanze** di **tre backend** (Piped + YTDLP +
-  Invidious) e le **verifica** (health check) ogni 5 minuti, usando la
-  prima viva (ricordata in `localStorage` per ripartire subito);
-- se un'istanza fallisce, la scarta e **passa alle altre in automatico**;
-- se **tutto Piped fallisce**, pirotta su **YTDLP** (yt-dlp server-side di
-  ytdlp.online, raggiunto via proxy CORS pubblico — vedi sotto) e infine
-  su **Invidious** come riserva;
-- **scarica a runtime le liste ufficiali** (TeamPiped documentation e
-  api.invidious.io) così se spunta una nuova istanza viva la pagina la
-  scopre da sola, senza aggiornare il codice;
-- quando YouTube blocca l'istanza (“Sign in to confirm you're not a bot”),
-  la pagina **riprova da sola** con attese crescenti e mostra un messaggio
-  chiaro se il blocco persiste: basta riprovare tra qualche minuto.
+- **Pool di proxy** (`YTDLP_PROXIES` in `app.js`) verificati con **health
+  check** ogni 6 minuti, usando il primo vivo (ricordato in `localStorage`);
+- **Rotazione automatica**: ogni proxy ha un IP diverso → **quota giornaliera
+  separata** (ytdlp.online concede ~5 task/giorno per IP). Se un proxy è a
+  quota o fallisce, la pagina **passa al successivo in automatico** e lo
+  ricorda per 30 minuti (non lo riprova a ogni richiesta);
+- **Cache locale dei formati**: una volta estratti i formati di un video
+  (valgono 6 ore), i **download ripetuti non consumano più task** — la cache
+  rende i re-download istantanei;
+- **Cache della ricerca** (10 minuti): ricerche ripetute non consumano task;
+- **Retry aggressivo**: se tutti i proxy falliscono, la pagina riprova un
+  altro giro con attese crescenti prima di arrendersi, e mostra un messaggio
+  chiaro (il limite di ytdlp.online si resetta da solo).
 
 ## Onestà tecnica
 
 Verificato empiricamente (ago 2026): senza alcun server non è possibile
 garantire il 100% dei download, perché **YouTube non concede CORS** alle sue
-API interne (il browser non può chiamarle direttamente) e blocca in modo
-intermittente le istanze pubbliche gratuite. Per questo:
+API interne (il browser non può chiamarle direttamente) e ytdlp.online ha un
+**limite di ~5 conversioni/giorno per IP**. La pagina mitiga con tre accorgimenti
+verificati dal vivo:
 
-- **Ricerca e anteprima**: funzionano quasi sempre.
-- **Download**: funzionano quando l'istanza pubblica non è in blocco
-  (verificato: audio/video scaricati dal browser, ~11 MB in questo test).
-  Nei momenti di blocco la pagina ritenta da sola e poi chiede di riprovare.
-- **Playlist**: l'estrazione dipende dall'istanza; se bloccata la pagina
-  mostra un messaggio esplicito.
-- **Engine YTDLP (riserva)**: ytdlp.online gira yt-dlp server-side e
-  streama l'output via SSE su `/api/v1/stream`. Il browser non può leggere
-  l'SSE (nessun header CORS), quindi la pagina passa da **corsproxy.io**
-  (proxy CORS pubblico, verificato dal vivo: `-J` restituisce il JSON
-  completo di yt-dlp con 49 formati). Limiti verificati: **~5 task/giorno
-  per utenti anonimi** (messaggio chiaro quando si esaurisce) e i formati
-  hanno URL googlevideo senza CORS → il download si apre in una scheda.
+1. **Pool di proxy CORS** — ogni proxy ha un IP diverso, quindi la quota
+   giornaliera si moltiplica per il numero di proxy vivi. Se un IP è a quota,
+   si passa al successivo (e lo si ricorda per 30 min).
+2. **Cache dei formati in `localStorage`** — un video già estratto (valido 6
+   ore) non consuma più task: i download ripetuti sono istantanei e gratuiti.
+3. **Retry con secondo giro** — se tutti i proxy falliscono, la pagina riprova
+   tutto un'altra volta con attese crescenti (l'anti-bot è intermittente).
+
+Limiti reali, verificati:
+
+- **~5 task/giorno per IP** su ytdlp.online: quando si esaurisce la pagina
+  mostra un messaggio chiaro e passa ai proxy successivi; quando tutti sono a
+  quota chiede di riprovare (il contatore si resetta da solo).
+- I formati hanno **URL googlevideo senza CORS**: il download si apre in una
+  scheda (il browser lo scarica comunque, senza barra di progresso).
 - **Widget ytdown.tools (bestapi.cc)**: nel pannello “Incolla link”, per un
-  video c'è il pulsante **🎯 scarica con widget ytdown.tools** che apre in
-  un iframe il widget di bestapi.cc (`frame-ancestors *`, verificato nel
+  video c'è il pulsante **🎯 scarica con widget ytdown.tools** che apre in un
+  iframe il widget di bestapi.cc (`frame-ancestors *`, verificato nel
   browser: mostra i formati MP3/MP4 con i pulsanti di conversione).
   Funziona sempre: i formati girano dentro il widget, nessun CORS da
   gestire.
-- **Altri siti (y2mate.vet, ytdown.tools, flvto.cyou, ytdlp.online)**: non
-  sono integrati come link nel footer. Ho verificato che i loro motori
-  (flvto.top per y2mate.vet, yt2api.com per ytdown.tools, flvto.com.im per
-  flvto.cyou) **rifiutano le richieste cross-origin** (403 a qualunque
-  Origin che non sia il proprio o IP dei proxy bloccato), quindi dal
-  browser restano solo come siti da aprire manualmente, se vuoi.
-- **Backend di riserva**: Invidious è incluso come fallback, ma **oggi le
-  sue istanze pubbliche non danno CORS permissivo né rispondono** (YouTube
-  le blocca con 403/401) — è codice pronto che si attiva da solo appena una
-  istanza Invidious torna viva e raggiungibile dal browser.
-- Per un download **garantito** servirebbe un server con IP diverso dal tuo
-  (es. un VPS da ~3€/mese): è l'unica strada che YouTube non riesce a
-  bloccare a lungo. La pagina attuale è la migliore opzione possibile
-  **senza server**.
+- Per un download **garantito** servirebbe un server con IP dedicato (es. un
+  VPS da ~3€/mese): è l'unica strada che YouTube non riesce a bloccare a
+  lungo. La pagina attuale è la migliore opzione possibile **senza server**.
 
 ## Sviluppo
 
 - `index.html`, `style.css`, `app.js` — pagina statica, JavaScript **ES5**
   volutamente senza framework né build: gira anche su browser datati
   (Firefox 44+, Chrome/Edge 49+, Safari 9+).
-- Il pool di istanze è `PIPED_POOL` in `app.js` (in cima): aggiungi un'istanza
-  pubblica di Piped come voce dell'array; il health check la valuta da solo.
+- Il pool di proxy è `YTDLP_PROXIES` in `app.js` (in cima): aggiungi un proxy
+  CORS pubblico come voce dell'array; il health check lo valuta da solo.
 - Nessuna dipendenza, nessun account, nessun deploy: basta pushare su GitHub
   Pages.
 
@@ -123,9 +116,9 @@ bash tools/bump.sh
 ## Note
 
 - Solo per contenuti di cui hai i diritti.
-- Le istanze pubbliche di Piped possono cambiare/bloccarsi: è il costo di
-  non avere un server. Se un'istanza muore, aggiungine un'altra a `PIPED_POOL`
-  e la pagina la userà da sola.
+- I proxy CORS pubblici possono cambiare/bloccarsi: è il costo di non avere un
+  server. Se un proxy muore, aggiungine un altro a `YTDLP_PROXIES` e la
+  pagina lo userà da sola.
 - **Browser datati**: la pagina è JavaScript ES5 puro (niente `let`/arrow/fetch,
   niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in
   su (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con
@@ -173,85 +166,78 @@ The page UI is bilingual (IT/EN toggle, top right).
 
 ## How it works — zero server
 
-The page is **100% static** (GitHub Pages) and talks **straight from the
-browser** to the **public Piped API** (free, no account, permissive CORS).
-There is no server of yours, nothing to configure:
+The page is **100% static** (GitHub Pages) and talks **from the browser** to
+**ytdlp.online** (yt-dlp server-side, free and no account). There is no server
+of yours, nothing to configure:
 
 ```
 browser (static page on GitHub Pages)
-   │  direct requests (CORS *) to the public Piped API
+   │  requests through a public CORS proxy (adds the CORS headers)
    ▼
-public Piped instance → YouTube → audio/video URLs
-   │  bytes flow straight to the browser (Piped's CORS proxy)
+CORS proxy → ytdlp.online (yt-dlp server-side) → YouTube
+   │  direct audio/video URLs (googlevideo)
    ▼
-download
+download (opens in a tab)
 ```
 
-Public instances get **blocked/changed by YouTube intermittently**
-(anti-bot). The page handles it by itself:
+The browser cannot read ytdlp.online's SSE response (no CORS headers), so the
+page goes through a **pool of public CORS proxies**. The page handles all the
+resilience by itself:
 
-- keeps a **pool of instances from three backends** (Piped + YTDLP +
-  Invidious) and **health-checks** them every 5 minutes, using the first
-  alive one (remembered in `localStorage` to start fast);
-- if an instance fails, it discards it and **falls through to the others
-  automatically**;
-- if **all of Piped fails**, it fails over to **YTDLP** (yt-dlp on
-  ytdlp.online, reached through a public CORS proxy — see below) and
-  finally to **Invidious** as a reserve;
-- **downloads the official instance lists at runtime** (TeamPiped
-  documentation and api.invidious.io), so if a new alive instance appears
-  the page discovers it by itself, without a code update;
-- when YouTube blocks the instance (“Sign in to confirm you're not a bot”),
-  the page **retries on its own** with increasing waits and shows a clear
-  message if the block persists: just try again in a few minutes.
+- **Proxy pool** (`YTDLP_PROXIES` in `app.js`) **health-checked** every 6
+  minutes, using the first alive one (remembered in `localStorage`);
+- **Automatic rotation**: each proxy has a different IP → **separate daily
+  quota** (ytdlp.online allows ~5 tasks/day per IP). If a proxy is at quota
+  or fails, the page **moves to the next one automatically** and remembers it
+  for 30 minutes (no repeated attempts);
+- **Local formats cache**: once a video's formats are extracted (valid 6
+  hours), **repeated downloads consume zero tasks** — re-downloads are
+  instant;
+- **Search cache** (10 minutes): repeated searches consume zero tasks;
+- **Aggressive retry**: if all proxies fail, the page tries a second full
+  round with increasing waits before giving up, and shows a clear message
+  (ytdlp.online's counter resets on its own).
 
 ## Technical honesty
 
 Verified empirically (Aug 2026): with no server at all, 100% reliable
 downloads are impossible, because **YouTube does not grant CORS** to its
-internal APIs (the browser cannot call them directly) and intermittently
-blocks free public instances. Therefore:
+internal APIs (the browser cannot call them directly) and ytdlp.online has a
+**~5 conversions/day per IP limit**. The page mitigates with three measures,
+all verified live:
 
-- **Search & preview**: work almost always.
-- **Downloads**: work when the public instance is not blocked (verified:
-  audio/video downloaded from the browser, ~11 MB in this test). During
-  block windows the page retries by itself, then asks you to retry later.
-- **Playlists**: extraction depends on the instance; if blocked, the page
-  shows an explicit message.
-- **YTDLP engine (reserve)**: ytdlp.online runs yt-dlp server-side and
-  streams the output via SSE on `/api/v1/stream`. The browser cannot read
-  the SSE (no CORS headers), so the page goes through **corsproxy.io**
-  (public CORS proxy, verified live: `-J` returns the full yt-dlp JSON
-  with 49 formats). Verified limits: **~5 tasks/day for anonymous users**
-  (clear message when exhausted) and the formats are googlevideo URLs
-  without CORS → the download opens in a tab.
+1. **CORS proxy pool** — each proxy has a different IP, so the daily quota
+   is multiplied by the number of alive proxies. If one IP is at quota, the
+   page moves to the next (and remembers it for 30 min).
+2. **Formats cache in `localStorage`** — a video already extracted (valid 6
+   hours) consumes zero further tasks: re-downloads are instant and free.
+3. **Retry with a second round** — if all proxies fail, the page retries
+   everything once more with increasing waits (the anti-bot is
+   intermittent).
+
+Real, verified limits:
+
+- **~5 tasks/day per IP** on ytdlp.online: when exhausted, the page shows a
+  clear message and moves to the next proxy; when all are at quota it asks
+  you to retry (the counter resets on its own).
+- The formats are **googlevideo URLs without CORS**: the download opens in a
+  tab (the browser still downloads it, just without a progress bar).
 - **ytdown.tools widget (bestapi.cc)**: in the “Paste link” panel, for a
   video there is a **🎯 download with ytdown.tools widget** button that
   opens the bestapi.cc widget in an iframe (`frame-ancestors *`, verified
   in a real browser: it shows the MP3/MP4 formats with convert buttons).
   It always works: the formats run inside the widget, no CORS to handle.
-- **Other sites (y2mate.vet, ytdown.tools, flvto.cyou, ytdlp.online)**: not
-  integrated as footer links. I verified their engines (flvto.top for
-  y2mate.vet, yt2api.com for ytdown.tools, flvto.com.im for flvto.cyou)
-  **reject cross-origin requests** (403 to any Origin that is not their own
-  or blocked proxy IPs), so from the browser they remain only as sites to
-  open manually, if you want.
-- **Reserve backend**: Invidious is included as a fallback, but **today its
-  public instances do not grant permissive CORS nor respond** (YouTube
-  blocks them with 403/401) — ready code that activates on its own as soon
-  as an Invidious instance comes back alive and reachable from the
-  browser.
-- For **guaranteed** downloads you would need a server on a different IP
-  than yours (e.g. a ~3€/month VPS): it is the only route YouTube cannot
-  block for long. This page is the best option possible **without a server**.
+- For **guaranteed** downloads you would need a server on a dedicated IP
+  (e.g. a ~3€/month VPS): it is the only route YouTube cannot block for
+  long. This page is the best option possible **without a server**.
 
 ## Development
 
 - `index.html`, `style.css`, `app.js` — static page, plain **ES5** JavaScript
   (no framework, no build): works on old browsers too (Firefox 44+,
   Chrome/Edge 49+, Safari 9+).
-- The instance pool is `PIPED_POOL` in `app.js` (at the top): add a public
-  Piped instance as an array entry; the health check evaluates it on its own.
+- The proxy pool is `YTDLP_PROXIES` in `app.js` (at the top): add a public
+  CORS proxy as an array entry; the health check evaluates it on its own.
 - No dependencies, no account, no deploy: just push to GitHub Pages.
 
 ### Version bump
@@ -266,9 +252,9 @@ bash tools/bump.sh
 ## Notes
 
 - Only for content you have rights to.
-- Public Piped instances can change/be blocked: that's the price of having
-  no server. If an instance dies, add another to `PIPED_POOL` and the page
-  will use it on its own.
+- Public CORS proxies can change/be blocked: that's the price of having no
+  server. If a proxy dies, add another to `YTDLP_PROXIES` and the page will
+  use it on its own.
 - **Older browsers**: the page is plain ES5 JavaScript (no `let`/arrow/fetch,
   no build) and uses `<audio>` for preview: works roughly from 2015 onwards
   (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 with

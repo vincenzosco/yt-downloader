@@ -2,11 +2,12 @@
 (function () {
   'use strict';
 
-  /* La pagina NON usa alcun server: parla direttamente con le API pubbliche
-     di Piped (gratis, senza account, CORS permissivo) dal browser. Le
-     istanze pubbliche vengono bloccate/cambiate da YouTube in modo
-     intermittente, quindi la pagina tiene un pool, le verifica (health
-     check) e usa la prima viva, ricontrollando in automatico. */
+  /* La pagina NON usa alcun server: parla con ytdlp.online (yt-dlp
+     server-side, gratis e senza account) attraverso un pool di proxy CORS
+     pubblici. Ogni proxy ha un IP diverso -> quota giornaliera separata
+     (~5 task/IP): la pagina li verifica (health check), ruota in automatico
+     e salva in localStorage i formati già estratti, così i download ripetuti
+     non consumano più task. */
 
   /* ---------- lingua ---------- */
 
@@ -23,9 +24,9 @@
       'noscript': 'Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).',
       'engine-label': 'engine:',
       'disclaimer': 'solo per contenuti di cui hai i diritti.',
-      'piped-checking': 'verifico le istanze pubbliche…',
-      'piped-none': 'Nessuna istanza pubblica raggiungibile in questo momento. Riprova tra poco.',
-      'piped-label': 'browser (API Piped pubblica)',
+      'ytdlp-checking': 'verifico i server yt-dlp…',
+      'ytdlp-none': 'Nessun server yt-dlp raggiungibile in questo momento. Riprova tra poco.',
+      'ytdlp-label': 'yt-dlp (ytdlp.online)',
       'searching': 'cerco…',
       'no-results': 'nessun risultato per \u201c{0}\u201d',
       'search-err': 'ricerca: {0}',
@@ -34,7 +35,7 @@
       'widget-open': '🎯 scarica con widget ytdown.tools',
       'widget-close': 'chiudi widget',
       'open-manually': 'Questo formato si apre in una nuova scheda: se il download non parte, clicca con il tasto destro e “Salva con nome”.',
-      'ytdlp-limit': 'ytdlp.online ha raggiunto il limite giornaliero di conversioni gratuite: riprova domani (o usa gli altri engine).',
+      'ytdlp-limit': 'ytdlp.online ha raggiunto il limite giornaliero di conversioni gratuite (5/IP). Riprova domani o tra qualche ora — i video già scaricati restano in cache.',
       'info-err': 'info video: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link non riconosciuto: incolla un URL di YouTube (video o playlist).',
@@ -65,6 +66,7 @@
       'youtube-refused': 'YouTube ha rifiutato la richiesta (blocco temporaneo). Riprova tra poco.',
       'youtube-refused-status': 'YouTube ha rifiutato la richiesta (HTTP {0}, blocco temporaneo). Riprova tra poco.',
       'interrupted': 'Download interrotto (rete o annullamento). Riprova.',
+      'network-err': 'Errore di rete: tutti i server yt-dlp sono irraggiungibili in questo momento. Riprova tra poco.',
       'retry-wait': "YouTube ha bloccato l'engine: riprovo da solo tra {0}s…",
       'zip-select': 'Seleziona per lo zip',
       'sel-count': '{0} selezionate',
@@ -90,9 +92,9 @@
       'noscript': 'This page requires JavaScript (ES5, works in any browser from ~2015).',
       'engine-label': 'engine:',
       'disclaimer': 'only for content you have rights to.',
-      'piped-checking': 'checking public instances…',
-      'piped-none': 'No public instance reachable right now. Try again soon.',
-      'piped-label': 'browser (public Piped API)',
+      'ytdlp-checking': 'checking yt-dlp servers…',
+      'ytdlp-none': 'No yt-dlp server reachable right now. Try again soon.',
+      'ytdlp-label': 'yt-dlp (ytdlp.online)',
       'searching': 'searching…',
       'no-results': 'no results for \u201c{0}\u201d',
       'search-err': 'search: {0}',
@@ -101,7 +103,7 @@
       'widget-open': '🎯 download with ytdown.tools widget',
       'widget-close': 'close widget',
       'open-manually': 'This format opens in a new tab: if the download does not start, right-click and “Save as”.',
-      'ytdlp-limit': 'ytdlp.online reached its daily free-conversion limit: try again tomorrow (or use the other engines).',
+      'ytdlp-limit': 'ytdlp.online reached its daily free-conversion limit (5/IP). Try again tomorrow or in a few hours — already-downloaded videos stay cached.',
       'info-err': 'video info: {0}',
       'playlist-err': 'playlist: {0}',
       'link-unrecognized': 'Link not recognized: paste a YouTube URL (video or playlist).',
@@ -132,6 +134,7 @@
       'youtube-refused': 'YouTube refused the request (temporary block). Try again soon.',
       'youtube-refused-status': 'YouTube refused the request (HTTP {0}, temporary block). Try again soon.',
       'interrupted': 'Download interrupted (network or cancelled). Try again.',
+      'network-err': 'Network error: all yt-dlp servers are unreachable right now. Try again soon.',
       'retry-wait': 'YouTube blocked the engine: retrying automatically in {0}s…',
       'zip-select': 'Select for zip',
       'sel-count': '{0} selected',
@@ -178,7 +181,7 @@
     }
     var btn = $('lang-toggle');
     if (btn) btn.textContent = currentLang === 'it' ? 'EN' : 'IT';
-    if (typeof renderPipedStatus === 'function') renderPipedStatus();
+    if (typeof renderEngineStatus === 'function') renderEngineStatus();
     if (typeof renderSel === 'function') renderSel();
   }
 
@@ -241,154 +244,65 @@
     try { window.localStorage.removeItem(key); } catch (e) { /* niente */ }
   }
 
-  /* ---------- engine: API pubbliche di Piped + Invidious (browser-direct, zero server) ----------
-     La pagina parla DIRETTAMENTE con le istanze pubbliche di due backend:
-       - Piped (default, quando vivo)
-       - Invidious (fallback, usato se TUTTO Piped fallisce)
-     Gratis, senza account, CORS permissivo; nessun server dietro, funziona da
-     sola su GitHub Pages. YouTube blocca/cambia le istanze pubbliche in modo
-     intermittente (anti-bot), quindi la pagina:
-       - tiene un pool per entrambi i backend e le verifica (health check)
-         ogni pochi minuti
-       - usa la prima viva, salvata anche in localStorage per ripartire subito
-       - se un'istanza fallisce, la scarta e passa alle altre in automatico;
-         se fallisce tutto Piped, pirotta su Invidious
-     Quando YouTube blocca l'istanza ("Sign in to confirm you're not a bot"),
-     la pagina riprova da sola con attese crescenti e alla fine mostra un
-     messaggio chiaro. */
+  /* ---------- engine: YTDLP (yt-dlp server-side via proxy CORS, zero server) ----------
+     La pagina NON usa alcun server: parla con ytdlp.online, che gira yt-dlp
+     lato server e streama l'output via SSE su /api/v1/stream. Il browser non
+     può leggere l'SSE (nessun header CORS), quindi la pagina passa da un
+     POOL di proxy CORS pubblici che inoltrano la richiesta e aggiungono gli
+     header necessari.
 
-  /* Pool di istanze pubbliche di Piped, ordinate con le più vicine/affidabili
-     in cima. Le istanze pubbliche nascono e muoiono spesso (anti-bot di
-     YouTube), quindi il pool è volutamente ampio: il health check scarta le
-     morte e la pagina usa la prima che risponde davvero. Aggiungi qui una
-     nuova istanza o un candidato per ampliare la rete. */
-  var PIPED_POOL = [
-    'https://api.piped.private.coffee',
-    'https://pipedapi.orangenet.cc',
-    'https://api.piped.projectsegfau.lt',
-    'https://pipedapi.adminforge.de',
-    'https://pipedapi.drgns.space',
-    'https://pipedapi.ducks.party',
-    'https://api.piped.yt',
-    'https://pipedapi.leptons.xyz',
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.reallyaweso.me',
-    'https://piped-api.codespace.cz',
-    'https://pipedapi.darkness.services',
-    'https://pipedapi.nosebs.ru',
-    'https://pipedapi-libre.kavin.rocks',
-    'https://piped-api.privacy.com.de',
-    'https://api.piped.shynek.de',
-    'https://piped-api.owo.si',
-    'https://pipedapi.mha.fi'
+     Perché un pool di proxy? ytdlp.online ha un limite di ~5 task/giorno per
+     IP. Ogni proxy ha un IP diverso -> quota separata: ruotando i proxy si
+     moltiplica la quota giornaliera. Il tool prova il primo proxy vivo e, se
+     è a quota o fallisce, passa al successivo in automatico.
+
+     In più la pagina tiene una cache locale dei formati (localStorage): un
+     video già estratto non consuma più task nei download successivi — i
+     download ripetuti costano zero.
+
+     I formati hanno URL googlevideo senza CORS: si scaricano aprendoli in
+     una scheda (flag direct). */
+
+  /* Pool di proxy CORS pubblici (ognuno = IP diverso = quota separata).
+     Aggiungi qui un nuovo proxy per allargare la rete. L'ordine conta:
+     i più affidabili in cima. */
+  var YTDLP_PROXIES = [
+    'https://corsproxy.io/?url=',
+    'https://api.allorigins.win/raw?url=',
+    'https://api.codetabs.com/v1/proxy?quest=',
+    'https://cors.lol/?url=',
+    'https://api.cors.lol/?url=',
+    'https://cors.eu.org/?url=',
+    'https://whateverorigin.org/get?url=',
+    'https://test.cors.workers.dev/?url='
   ];
-  /* Istanza di ultima risorsa: se il health check scarta tutto, prova questa
-     comunque sulla search reale (alcune istanze mentono sull'healthcheck o
-     rispondono solo su certi endpoint). */
-  var PIPED_FALLBACK = 'https://api.piped.private.coffee';
-  var PIPED_TTL = 4 * 60 * 1000;  /* ricontrolla le istanze ogni 4 min */
-  var PIPED_KEY = 'ytd.piped';
-  var pipedBase = '';
-  var pipedChecked = 0;
-  var pipedChecking = false;
+  var PROXY_TTL = 6 * 60 * 1000;   /* ricontrolla i proxy ogni 6 min */
+  var PROXY_KEY = 'ytd.proxy';
+  var proxyGood = '';              /* proxy in uso (l'ultimo che ha funzionato) */
+  var proxyChecked = 0;
+  var proxyChecking = false;
 
-  /* ---- backend di riserva: Invidious (usato se TUTTO Piped fallisce) ----
-     Invidious oggi risponde quasi ovunque 403 (YouTube blocca anche lui),
-     quindi è codice pronto ma inattivo: appena una delle istanze qui sotto
-     (o l'una trovatane nelle liste remote) torna viva, la pagina la usa. */
-  var INVID_POOL = [
-    'https://inv.nadeko.net',
-    'https://invidious.nerdvpn.de',
-    'https://invidious.f5.si',
-    'https://invidious.tiekoetter.com'
-  ];
-  var INVID_KEY = 'ytd.invid';
-  var invidBase = '';
-  var invidChecked = 0;
-  var invidChecking = false;
-
-  function invidLoadCache() {
+  function proxyLoadCache() {
     try {
-      var j = JSON.parse(window.localStorage.getItem(INVID_KEY) || 'null');
-      if (j && j.base && j.at && (Date.now() - j.at) < PIPED_TTL) return j.base;
+      var j = JSON.parse(window.localStorage.getItem(PROXY_KEY) || 'null');
+      if (j && j.p && j.at && (Date.now() - j.at) < PROXY_TTL) return j.p;
     } catch (e) { /* ignora */ }
     return '';
   }
-  function invidSave(base) {
+  function proxySave(p) {
     try {
-      window.localStorage.setItem(INVID_KEY, JSON.stringify({ base: base, at: Date.now() }));
+      window.localStorage.setItem(PROXY_KEY, JSON.stringify({ p: p, at: Date.now() }));
     } catch (e) { /* ignora */ }
   }
 
-  /* lista ufficiale istanze Invidious (api.invidious.io/instances.json, CORS *) */
-  var INVID_LIST_SOURCE = 'https://api.invidious.io/instances.json?pretty=1';
-
-  function invidProbe(base, cb) {
+  /* health check di un proxy: gli chiediamo una risorsa innocua (con CORS
+     permissivo) — non ytdlp.online, per non consumare la quota di test */
+  function proxyProbe(p, cb) {
     var x = new XMLHttpRequest();
-    x.open('GET', base + '/api/v1/search?q=probe', true); /* search reale, non healthcheck */
-    x.timeout = 8000;
+    x.open('GET', p + encodeURIComponent('https://api.github.com/zen'), true);
+    x.timeout = 10000;
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
-      /* Invidious può rispondere 403 "Endpoint disabled" anche se l'istanza è
-         su: meglio provarla comunque in pipedGet-style. Qui conta solo se la
-         rotta HTTP esiste (2xx/3xx): i 403 si valutano all'uso. */
-      cb(x.status > 0); /* qualunque risposta HTTP = host raggiungibile */
-    };
-    x.onerror = function () { cb(false); };
-    x.ontimeout = function () { cb(false); };
-    x.send();
-  }
-
-  function invidRefresh(force, cb) {
-    if (invidChecking) { if (cb) setTimeout(function () { cb(invidBase); }, 200); return; }
-    if (!force && invidBase && invidChecked && (Date.now() - invidChecked) < PIPED_TTL) {
-      if (cb) cb(invidBase); return;
-    }
-    var cached = invidLoadCache();
-    if (!force && cached && !invidBase) { invidBase = cached; invidChecked = Date.now(); if (cb) cb(invidBase); return; }
-    invidChecking = true;
-    /* c'è solitamente 1 sola istanza viva: prova prima la cache/fallback noti */
-    var pool = INVID_POOL;
-    var alive = [];
-    var pending = pool.length;
-    if (!pending) { invidChecking = false; if (cb) cb(''); return; }
-    for (var i = 0; i < pool.length; i++) {
-      (function (base) {
-        invidProbe(base, function (ok) {
-          if (ok && alive.indexOf(base) === -1) alive.push(base);
-          pending--;
-          if (pending === 0) {
-            invidChecking = false;
-            invidChecked = Date.now();
-            invidBase = alive.length ? alive[0] : (cached || '');
-            if (invidBase) invidSave(invidBase);
-            if (cb) cb(invidBase);
-          }
-        });
-      })(pool[i]);
-    }
-  }
-
-  function pipedLoadCache() {
-    try {
-      var j = JSON.parse(window.localStorage.getItem(PIPED_KEY) || 'null');
-      if (j && j.base && j.at && (Date.now() - j.at) < PIPED_TTL) return j.base;
-    } catch (e) { /* ignora */ }
-    return '';
-  }
-  function pipedSave(base) {
-    try {
-      window.localStorage.setItem(PIPED_KEY, JSON.stringify({ base: base, at: Date.now() }));
-    } catch (e) { /* ignora */ }
-  }
-
-  function pipedProbe(base, cb) {
-    var x = new XMLHttpRequest();
-    x.open('GET', base + '/healthcheck', true);
-    x.timeout = 9000;
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      /* 2xx/3xx = viva (3xx: redirect; l'API vera la verifica la richiesta) */
       cb(x.status >= 200 && x.status < 400);
     };
     x.onerror = function () { cb(false); };
@@ -396,205 +310,40 @@
     x.send();
   }
 
-  /* Fonti remote (browser-legibili via CORS) delle liste ufficiali delle
-     istanze Piped. La pagina le scarica a RUNTIME e aggrega gli URL con il
-     pool locale, così se una nuova istanza pubblica diventa disponibile la
-     pagina la scopre da sola, senza dover aggiornare il codice.
-       - TeamPiped/documentation (markdown, CORS *) — la lista ufficiale
-       - api.github.com (JSON, CORS *) — stesso contenuto, formato diverso
-     Il fetch fallisce senza conseguenze: si usa comunque PHP_POOL. */
-  var PIPED_LIST_SOURCES = [
-    'https://raw.githubusercontent.com/TeamPiped/documentation/main/content/docs/public-instances/index.md',
-    'https://api.github.com/repos/TeamPiped/documentation/contents/content/docs/public-instances/index.md'
-  ];
-
-  /* estrae gli URL delle istanze Piped da markdown O json della API GitHub */
-  function pipedUrlsFrom(body) {
-    var out = [];
-    var text = String(body == null ? '' : body);
-    var m;
-    var re = /https:\/\/[a-z0-9.-]*[:]?[a-z0-9.-]*piped[a-z0-9.-]*/gi;
-    var seen = {};
-    while ((m = re.exec(text)) !== null) {
-      var u = m[0].replace(/\/+$/, '');
-      if (/\s|['"]/.test(u)) continue;
-      if (!seen[u]) { seen[u] = 1; out.push(u); }
+  function proxyRefresh(force, cb) {
+    if (proxyChecking) { if (cb) setTimeout(function () { cb(proxyGood); }, 300); return; }
+    if (!force && proxyGood && proxyChecked && (Date.now() - proxyChecked) < PROXY_TTL) {
+      if (cb) cb(proxyGood); return;
     }
-    return out;
-  }
-
-  function pipedFetchLists(cb) {
-    var urls = [];
-    var pending = PIPED_LIST_SOURCES.length;
-    if (!pending) { cb([]); return; }
-    PIPED_LIST_SOURCES.forEach(function (src) {
-      var x = new XMLHttpRequest();
-      x.open('GET', src, true);
-      x.timeout = 10000;
-      x.onreadystatechange = function () {
-        if (x.readyState !== 4) return;
-        if (x.status >= 200 && x.status < 300) {
-          /* api.github.com restituisce l'html o {content}? per markdown textuale
-             basta usare la risposta come stringa ed estrarre gli URL */
-          var b = x.responseText || '';
-          /* se api.github restituisce base64 (content), decodifica per cercare */
-          var decoded = b;
-          try {
-            var j = JSON.parse(b);
-            if (j && typeof j.content === 'string') {
-              decoded = decodeURIComponent(escape(atob(j.content.replace(/\s/g, ''))));
-            }
-          } catch (e) { /* non json: usa il body grezzo */ }
-          urls = urls.concat(pipedUrlsFrom(decoded));
-        }
-        pending--;
-        if (pending === 0) cb(urls);
-      };
-      x.onerror = function () { pending--; if (pending === 0) cb(urls); };
-      x.ontimeout = function () { pending--; if (pending === 0) cb(urls); };
-      x.send();
-    });
-  }
-
-  /* pool finale: hardcoded + quelli dalle liste remote, deduplicato e con
-     l'hardcoded in testa (per ordinamento prevedibile) */
-  function pipedFullPool(listUrls) {
-    var out = [];
-    var seen = {};
-    function add(u) {
-      u = String(u || '').replace(/\/+$/, '').replace(/^http:\/\//, 'https://');
-      if (!u || seen[u] || !/^https:\/\//.test(u)) return;
-      seen[u] = 1;
-      out.push(u);
+    var cached = proxyLoadCache();
+    if (!force && cached && !proxyGood) { proxyGood = cached; proxyChecked = Date.now(); if (cb) cb(proxyGood); return; }
+    proxyChecking = true;
+    var alive = [];
+    var pending = YTDLP_PROXIES.length;
+    if (!pending) { proxyChecking = false; if (cb) cb(''); return; }
+    for (var i = 0; i < YTDLP_PROXIES.length; i++) {
+      (function (p) {
+        proxyProbe(p, function (ok) {
+          if (ok && alive.indexOf(p) === -1) alive.push(p);
+          pending--;
+          if (pending === 0) {
+            proxyChecking = false;
+            proxyChecked = Date.now();
+            proxyGood = alive.length ? alive[0] : cached;
+            if (proxyGood) proxySave(proxyGood);
+            if (cb) cb(proxyGood);
+          }
+        });
+      })(YTDLP_PROXIES[i]);
     }
-    PIPED_POOL.forEach(add);
-    (listUrls || []).forEach(add);
-    return out;
   }
 
-  function pipedRefresh(force, cb) {
-    if (pipedChecking) {
-      if (cb) setTimeout(function () { cb(pipedBase); }, 300);
-      return;
-    }
-    if (!force && pipedBase && pipedChecked && (Date.now() - pipedChecked) < PIPED_TTL) {
-      if (cb) cb(pipedBase);
-      return;
-    }
-    var cached = pipedLoadCache();
-    if (!force && cached && !pipedBase) { pipedBase = cached; pipedChecked = Date.now(); if (cb) cb(pipedBase); return; }
-    pipedChecking = true;
-    pipedFetchLists(function (listUrls) {
-      var pool = pipedFullPool(listUrls);
-      var alive = [];
-      var pending = pool.length;
-      if (!pending) {
-        pipedChecking = false;
-        pipedBase = PIPED_FALLBACK;
-        pipedChecked = Date.now();
-        if (cb) cb(pipedBase);
-        return;
-      }
-      for (var i = 0; i < pool.length; i++) {
-        (function (base) {
-          pipedProbe(base, function (ok) {
-            if (ok && alive.indexOf(base) === -1) alive.push(base);
-            pending--;
-            if (pending === 0) {
-              pipedChecking = false;
-              pipedChecked = Date.now();
-              /* se il health check non trova nulla, ripiega sull'istanza nota
-                 (ultima risorsa): alcune istanze mentono o rispondono solo su
-                 certe rotte, meglio provare che dichiarare tutto morto */
-              pipedBase = alive.length ? alive[0] : PIPED_FALLBACK;
-              if (pipedBase) pipedSave(pipedBase);
-              if (typeof window.__ytdOnPiped === 'function') window.__ytdOnPiped(pipedBase);
-              if (cb) cb(pipedBase);
-            }
-          });
-        })(pool[i]);
-      }
-    });
-  }
-
-  /* istanza viva non ancora provata in questo giro; se il health check non
-     trova nulla, usa l'istanza di fallback (così si tenta sempre almeno una
-     rotta prima di dire "nessuna api"). */
-  function ensureBase(tried, cb) {
-    var skip = function (u) { return u && (!tried || tried.indexOf(u) === -1); };
-    pipedRefresh(false, function (base) {
-      if (skip(base)) { cb(base); return; }
-      pipedRefresh(true, function (base2) {
-        if (skip(base2)) { cb(base2); return; }
-        /* ultima risorsa: prova il fallback, anche se non ha passato il check */
-        if (skip(PIPED_FALLBACK)) { cb(PIPED_FALLBACK); return; }
-        /* l'ultima istanza che ha funzionato (memoria) come disperata */
-        var cached = pipedLoadCache();
-        if (skip(cached)) { cb(cached); return; }
-        cb('');
-      });
-    });
-  }
-
-  function xhrPipedJson(url, ok, err) {
-    var x = new XMLHttpRequest();
-    x.open('GET', url, true);
-    x.timeout = 15000;
-    x.onreadystatechange = function () {
-      if (x.readyState !== 4) return;
-      if (x.status >= 200 && x.status < 300) {
-        var data = null;
-        try { data = JSON.parse(x.responseText); } catch (e) { err('invalid response'); return; }
-        /* le API Piped restituiscono {error: "..."} con HTTP 200 per i
-           fallimenti applicativi (es. blocco anti-bot di YouTube) */
-        if (data && data.error) { err(String(data.error)); return; }
-        ok(data);
-      } else {
-        err('errore ' + x.status);
-      }
-    };
-    x.onerror = function () { err('network error'); };
-    x.ontimeout = function () { err('network error'); };
-    x.send();
-  }
-
-  /* ripulisce il messaggio di errore di Piped (traceback Java multi-riga) */
+  /* ripulisce il messaggio di errore (traceback multi-riga) */
   function pipedErrMsg(raw) {
     var s = String(raw == null ? '' : raw);
     s = s.split('\n')[0];
     if (s.length > 160) s = s.slice(0, 160);
     return s;
-  }
-
-  function pipedGet(path, ok, err, maxAttempts) {
-    var maxA = maxAttempts || 5;
-    var tried = [];
-    var rounds = 0;
-    (function go() {
-      ensureBase(tried, function (base) {
-        if (!base) {
-          /* nessuna istanza viva: prima di arrenderti, ripeti un altro giro
-             (in rete le cose cambiano in pochi secondi) e poi solo se ancora
-             nulla dichiara "nessuna api" */
-          rounds++;
-          if (rounds < 2) { setTimeout(go, 1500); return; }
-          err(t('piped-none'));
-          return;
-        }
-        tried.push(base);
-        xhrPipedJson(base + path,
-          function (data) { ok(data); },
-          function (msg) {
-            /* istanza giù o bloccata: riprova (un'altra istanza può essere
-               viva, o YouTube può aver sbloccato) con attesa crescente */
-            if (tried.length < maxA && shouldRetry(msg)) {
-              setTimeout(go, 1200 * tried.length);
-            } else {
-              err(msg);
-            }
-          });
-      });
-    })();
   }
 
   function retrySeconds(msg) {
@@ -605,6 +354,7 @@
   function friendlyMsg(raw) {
     var s = String(raw == null ? '' : raw);
     if (s === 'interrotto') return t('interrupted');
+    if (s === 'network error') return t('network-err');
     if (retrySeconds(s)) return t('bot-blocked');
     if (/not a bot|bot|LOGIN_REQUIRED|sign in|confirm you/i.test(s)) return t('bot-blocked');
     if (/youtube http 403|youtube http 429|errore 403|errore 429/.test(s)) return tF('youtube-refused-status', '403/429');
@@ -612,12 +362,7 @@
     return s;
   }
 
-  /* ---------- mapping dei dati Piped ---------- */
-
-  function vidFromUrl(u) {
-    var m = String(u || '').match(/[?&]v=([\w-]{6,20})/);
-    return m ? m[1] : '';
-  }
+  /* ---------- mapping dati ---------- */
 
   function fmtViews(n) {
     n = parseInt(n, 10) || 0;
@@ -627,85 +372,8 @@
     return String(n);
   }
 
-  /* normalizza un item di ricerca/playlist di Piped nel modello della pagina */
-  function pipedItem(it) {
-    var id = vidFromUrl(it.url);
-    return {
-      id: id,
-      title: it.title || '',
-      author: it.uploaderName || '',
-      duration: fmtDur(it.duration),
-      views: fmtViews(it.views),
-      thumb: it.thumbnail || thumbFor(id)
-    };
-  }
-
-  function pipedSearch(q, ok, err) {
-    pipedGet('/search?q=' + encodeURIComponent(q) + '&filter=all', function (data) {
-      var items = (data && data.items) || [];
-      var out = [];
-      for (var i = 0; i < items.length; i++) out.push(pipedItem(items[i]));
-      ok(out);
-    }, err, 4);
-  }
-
-  /* un singolo stream Piped -> formato della pagina */
-  function fmtFromStream(s, isAudio) {
-    var q = String(s.quality || '');
-    var height = parseInt(String(q).match(/(\d+)/), 10) || 0;
-    var kbps = Math.round((s.bitrate || 0) / 1000);
-    var label;
-    if (isAudio) {
-      label = kbps > 0 ? kbps + ' kbps' : (q || 'audio');
-    } else {
-      label = height > 0 ? (q.indexOf('60') !== -1 ? height + 'p60' : height + 'p') : (q || 'video');
-    }
-    return {
-      itag: String(s.itag),
-      label: label,
-      mime: s.mimeType || '',
-      size: (s.contentLength && s.contentLength > 0) ? s.contentLength : 0,
-      url: s.url || '',
-      height: height,
-      kbps: kbps
-    };
-  }
-
   function byHeight(x, y) { return y.height - x.height; }
   function byKbps(x, y) { return y.kbps - x.kbps; }
-
-  /* /streams/{id} -> { info, audio, progressive, video } */
-  function pipedFormats(id, ok, err) {
-    pipedGet('/streams/' + encodeURIComponent(id), function (data) {
-      var audio = [], progressive = [], video = [];
-      var a = data.audioStreams || [];
-      for (var i = 0; i < a.length; i++) if (a[i].url) audio.push(fmtFromStream(a[i], true));
-      var vs = data.videoStreams || [];
-      for (var j = 0; j < vs.length; j++) {
-        var s = vs[j];
-        if (!s.url || s.itag < 0) continue;             /* LBRY: non YouTube */
-        if (s.videoOnly) video.push(fmtFromStream(s, false));
-        else progressive.push(fmtFromStream(s, false));
-      }
-      var prog = data.video || [];
-      for (var k = 0; k < prog.length; k++) if (prog[k].url) progressive.push(fmtFromStream(prog[k], false));
-      audio.sort(byKbps);
-      progressive.sort(byHeight);
-      video.sort(byHeight);
-      ok({
-        info: {
-          id: id,
-          title: data.title || '',
-          author: data.uploader || '',
-          seconds: data.duration || 0,
-          thumb: data.thumbnailUrl || thumbFor(id)
-        },
-        audio: audio,
-        progressive: progressive,
-        video: video
-      });
-    }, err, 5);
-  }
 
   /* migliore stream per anteprima/zip: audio-only, altrimenti muxed, altrimenti video */
   function pickStream(fmts) {
@@ -715,200 +383,30 @@
     return null;
   }
 
-  /* ---------- dispatch: Piped prima, poi YTDLP, poi Invidious ----------
-     Ogni operazione prova il backend Piped; se TUTTO Piped fallisce (nessuna
-     istanza viva o tutte bloccate), pirotta su YTDLP (yt-dlp server-side via
-     proxy CORS) e infine su Invidious. Così la pagina ha tre famiglie di
-     API e passa da una all'altra in automatico. */
+  /* ---------- dispatch: unico engine YTDLP ---------- */
 
-  function runChain(ops, ok, err) {
-    var i = 0;
-    (function next(lastMsg) {
-      if (i >= ops.length) { err(lastMsg || t('piped-none')); return; }
-      ops[i++](function (val) { ok(val); }, function (msg) { next(msg); });
-    })();
-  }
+  function ytSearch(q, ok, err) { ytdlpSearch(q, ok, err); }
+  function ytFormats(id, ok, err) { ytdlpFormats(id, ok, err); }
+  function ytPlaylist(list, ok, err) { ytdlpPlaylist(list, ok, err); }
 
-  function ytSearch(q, ok, err) {
-    runChain([
-      function (o, e) { pipedSearch(q, o, e); },
-      function (o, e) { ytdlpSearch(q, o, e); },
-      function (o, e) { invidSearch(q, o, e); }
-    ], ok, err);
-  }
-  function ytFormats(id, ok, err) {
-    runChain([
-      function (o, e) { pipedFormats(id, o, e); },
-      function (o, e) { ytdlpFormats(id, o, e); },
-      function (o, e) { invidFormats(id, o, e); }
-    ], ok, err);
-  }
-  function ytPlaylist(list, ok, err) {
-    runChain([
-      function (o, e) { pipedPlaylist(list, o, e); },
-      function (o, e) { ytdlpPlaylist(list, o, e); },
-      function (o, e) { invidPlaylist(list, o, e); }
-    ], ok, err);
-  }
-
-  function pipedPlaylist(list, ok, err) {
-    var tries = 0;
-    (function go() {
-      pipedGet('/playlists/' + encodeURIComponent(list), function (data) {
-        var items = (data && data.relatedStreams) || [];
-        /* il blocco anti-bot di YouTube è intermittente: una playlist
-           vuota con nome presente = estrazione fallita, riprova una volta */
-        if (!items.length && data && data.name && tries < 1) {
-          tries++;
-          setTimeout(go, 2000);
-          return;
-        }
-        var out = [];
-        for (var i = 0; i < items.length; i++) out.push(pipedItem(items[i]));
-        ok({ name: (data && data.name) || '', items: out });
-      }, err, 3);
-    })();
-  }
-
-  /* ---------- mapping dei dati Invidious (backend di riserva) ---------- */
-
-  /* normalizza un item di ricerca/playlist di Invidious nel modello della pagina */
-  function invidItem(it) {
-    var thumbs = (it && it.videoThumbnails) || [];
-    var t = '';
-    for (var i = 0; i < thumbs.length; i++) if (thumbs[i] && thumbs[i].url) { t = thumbs[i].url; break; }
-    return {
-      id: it.videoId || '',
-      title: it.title || '',
-      author: it.author || '',
-      duration: fmtDur(it.lengthSeconds),
-      views: fmtViews(it.viewCount),
-      thumb: t || thumbFor(it.videoId)
-    };
-  }
-
-  /* formato Invidious (adaptive/formatStreams) -> formato della pagina */
-  function invidFmt(s, isAudio) {
-    var q = String(s.quality || '');
-    var height = parseInt(String(q).match(/(\d+)/), 10) || 0;
-    var bitrate = parseInt(s.bitrate, 10) || 0;
-    var kbps = Math.round(bitrate / 1000) || 0;
-    var label;
-    if (isAudio) label = kbps > 0 ? kbps + ' kbps' : (q || 'audio');
-    else label = height > 0 ? (q.indexOf('60') !== -1 ? height + 'p60' : height + 'p') : (q || 'video');
-    return {
-      itag: String(s.itag),
-      label: label,
-      mime: s.type || '',
-      size: 0,
-      url: s.url || '',
-      height: height,
-      kbps: kbps
-    };
-  }
-
-  function invidGet(path, ok, err, maxAttempts) {
-    var maxA = maxAttempts || 3;
-    invidRefresh(false, function (base) {
-      if (!base) { err(t('piped-none')); return; }
-      var attempts = 0;
-      (function go() {
-        attempts++;
-        var x = new XMLHttpRequest();
-        x.open('GET', base + path, true);
-        x.timeout = 15000;
-        x.onreadystatechange = function () {
-          if (x.readyState !== 4) return;
-          if (x.status >= 200 && x.status < 300) {
-            var data = null;
-            try { data = JSON.parse(x.responseText); } catch (e) { err('invalid response'); return; }
-            if (data && data.error && !Array.isArray(data)) { err(String(data.error)); return; }
-            ok(data);
-          } else {
-            var msg = (x.status === 0) ? 'network error' : 'errore ' + x.status;
-            if (attempts < maxA && shouldRetry(msg)) {
-              setTimeout(go, 1500 * attempts);
-            } else err(msg);
-          }
-        };
-        x.onerror = function () {
-          if (attempts < maxA) setTimeout(go, 1500 * attempts); else err('network error');
-        };
-        x.send();
-      })();
-    });
-  }
-
-  function invidSearch(q, ok, err) {
-    invidGet('/api/v1/search?q=' + encodeURIComponent(q), function (arr) {
-      var out = [];
-      var src = (arr && arr.length) ? arr : [];
-      for (var i = 0; i < src.length; i++) {
-        if (!src[i] || src[i].type !== 'video') continue;
-        var it = invidItem(src[i]);
-        if (it.id) out.push(it);
-      }
-      ok(out);
-    }, err, 3);
-  }
-
-  function invidFormats(id, ok, err) {
-    invidGet('/api/v1/videos/' + encodeURIComponent(id), function (data) {
-      var audio = [], progressive = [], video = [];
-      var ad = data.adaptiveFormats || [];
-      for (var i = 0; i < ad.length; i++) {
-        var s = ad[i];
-        if (!s || !s.url) continue;
-        var isAudio = /^audio\//.test(String(s.type || ''));
-        var f = invidFmt(s, isAudio);
-        if (isAudio && !f.kbps) f.label = s.audioQuality || 'audio';
-        if (isAudio) audio.push(f);
-        else video.push(f);
-      }
-      var fs = data.formatStreams || [];
-      for (var j = 0; j < fs.length; j++) if (fs[j] && fs[j].url) progressive.push(invidFmt(fs[j], false));
-      audio.sort(byKbps);
-      progressive.sort(byHeight);
-      video.sort(byHeight);
-      ok({
-        info: {
-          id: id,
-          title: data.title || '',
-          author: data.author || '',
-          seconds: data.lengthSeconds || 0,
-          thumb: data.thumbnailUrl || thumbFor(id)
-        },
-        audio: audio, progressive: progressive, video: video
-      });
-    }, err, 4);
-  }
-
-  function invidPlaylist(list, ok, err) {
-    invidGet('/api/v1/playlists/' + encodeURIComponent(list), function (data) {
-      var items = (data && data.videos) || [];
-      var out = [];
-      for (var i = 0; i < items.length; i++) {
-        var it = invidItem(items[i]);
-        if (it.id) out.push(it);
-      }
-      ok({ name: (data && data.title) || '', items: out });
-    }, err, 3);
-  }
-
-  /* ---------- engine di riserva YTDLP (yt-dlp server-side via proxy CORS) ----------
-     ytdlp.online gira yt-dlp lato server e streama l'output via SSE su
-     /api/v1/stream. Il browser non può leggere l'SSE (nessun header CORS),
-     quindi si passa da un proxy CORS pubblico (corsproxy.io) che inoltra la
-     risposta e aggiunge gli header. Con "-J" yt-dlp stampa il JSON dei
-     formati e chiude la connessione da solo in pochi secondi: la risposta è
-     breve, quindi il proxy la gestisce (lo streaming lungo no).
-     Nota: ytdlp.online ha un limite di ~5 task/giorno per utenti anonimi
-     (verificato dal vivo): è una riserva di emergenza, non l'engine
-     principale. I formati hanno URL googlevideo senza CORS: si scaricano
-     aprendoli in una scheda (flag direct). */
+  /* ---------- engine YTDLP: rotazione proxy + cache locale ---------- */
 
   var YTDLP_STREAM = 'https://ytdlp.online/api/v1/stream';
-  var YTDLP_PROXIES = ['https://corsproxy.io/?url='];
+  var FMT_CACHE_TTL = 6 * 60 * 60 * 1000;   /* i formati di un video valgono 6h */
+  var SRCH_CACHE_TTL = 10 * 60 * 1000;      /* la ricerca si aggiorna ogni 10 min */
+
+  function cacheGet(key, ttl) {
+    try {
+      var j = JSON.parse(window.localStorage.getItem(key) || 'null');
+      if (j && j.at && (Date.now() - j.at) < ttl) return j.data;
+    } catch (e) { /* ignora */ }
+    return null;
+  }
+  function cacheSet(key, data) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify({ at: Date.now(), data: data }));
+    } catch (e) { /* ignora */ }
+  }
 
   function ytdlpJobId() {
     return 'job-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
@@ -945,32 +443,83 @@
     return null;
   }
 
-  /* esegue un comando yt-dlp via proxy CORS e restituisce il JSON (-J) */
-  function ytdlpRun(command, ok, err, attempts) {
-    var maxA = attempts || 3;
-    var n = 0;
-    (function go() {
-      n++;
-      var url = YTDLP_STREAM + '?command=' + encodeURIComponent(command) +
-        '&job_id=' + ytdlpJobId() + '&source=index&engine=stable';
-      var x = new XMLHttpRequest();
-      x.open('GET', YTDLP_PROXIES[0] + encodeURIComponent(url), true);
-      x.timeout = 50000;
-      x.onreadystatechange = function () {
-        if (x.readyState !== 4) return;
-        if (x.status >= 200 && x.status < 300) {
-          var obj = ytdlpParse(x.responseText || '');
-          if (!obj) { retry('risposta non valida'); return; }
-          ok(obj);
-        } else retry(x.status === 0 ? 'network error' : 'errore ' + x.status);
-      };
-      x.onerror = function () { retry('network error'); };
-      x.ontimeout = function () { retry('timeout'); };
-      function retry(msg) {
-        if (n < maxA) setTimeout(go, 3500 * n); else err(msg);
+  /* memoria dei proxy "a quota": quando ytdlp.online dice che il limite
+     giornaliero è raggiunto, vale per l'IP di quel proxy — lo saltiamo per
+     30 minuti invece di riprovarlo a ogni richiesta. */
+  var PROXY_QUOTA_KEY = 'ytd.proxyquota';
+  var proxyQuota = {};   /* proxy -> timestamp scadenza */
+  function quotaLoad() {
+    try { proxyQuota = JSON.parse(window.localStorage.getItem(PROXY_QUOTA_KEY) || '{}'); }
+    catch (e) { proxyQuota = {}; }
+  }
+  function quotaMark(p) {
+    proxyQuota[p] = Date.now() + 30 * 60 * 1000;
+    try { window.localStorage.setItem(PROXY_QUOTA_KEY, JSON.stringify(proxyQuota)); } catch (e) { /* ignora */ }
+  }
+  function quotaOk(p) {
+    var until = proxyQuota[p];
+    return !until || Date.now() > until;
+  }
+  quotaLoad();
+
+  /* esegue un comando yt-dlp: prova il proxy preferito, poi gli altri del
+     pool in ordine (ognuno ha IP diverso -> quota separata). Con "-J" yt-dlp
+     stampa il JSON e chiude la connessione da solo in pochi secondi: la
+     risposta è breve, quindi il proxy la gestisce (lo streaming lungo no).
+     Quando il server dice "limite raggiunto", il limite vale per l'IP di
+     quel proxy: si passa subito al successivo (e lo si ricorda per 30 min).
+     I proxy rotti (risposta non-JSON) si scartano al volo senza retry. */
+  function ytdlpRun(command, ok, err) {
+    var tried = {};
+    var order = [];
+    function add(p) { if (p && !tried[p] && order.indexOf(p) === -1) order.push(p); }
+    add(proxyGood);
+    for (var i = 0; i < YTDLP_PROXIES.length; i++) add(YTDLP_PROXIES[i]);
+    var round = 0;
+    (function next(idx, lastMsg) {
+      /* salta i proxy a quota (ricordati per 30 min) */
+      while (idx < order.length && !quotaOk(order[idx])) idx++;
+      if (idx >= order.length) {
+        /* un giro completo fallito: riprova tutto un'altra volta (l'anti-bot
+           è intermittente, in pochi secondi un proxy può sbloccarsi) */
+        round++;
+        if (round < 2) { setTimeout(function () { next(0, lastMsg); }, 3000); return; }
+        err(lastMsg || t('ytdlp-none'));
+        return;
       }
-      x.send();
-    })();
+      var p = order[idx];
+      var n = 0;
+      (function go() {
+        n++;
+        var url = YTDLP_STREAM + '?command=' + encodeURIComponent(command) +
+          '&job_id=' + ytdlpJobId() + '&source=index&engine=stable';
+        var x = new XMLHttpRequest();
+        x.open('GET', p + encodeURIComponent(url), true);
+        x.timeout = 40000;
+        x.onreadystatechange = function () {
+          if (x.readyState !== 4) return;
+          if (x.status >= 200 && x.status < 300) {
+            var obj = ytdlpParse(x.responseText || '');
+            if (!obj) { next(idx + 1, 'risposta non valida'); return; }
+            if (obj.ytdlpLimit) {
+              /* proxy vivo ma a quota: ricorda (30 min) e passa avanti */
+              quotaMark(p);
+              proxyGood = p; proxySave(p);
+              next(idx + 1, t('ytdlp-limit'));
+              return;
+            }
+            proxyGood = p; proxySave(p);
+            ok(obj);
+          } else fail(x.status === 0 ? 'network error' : 'errore ' + x.status);
+        };
+        x.onerror = function () { fail('network error'); };
+        x.ontimeout = function () { fail('timeout'); };
+        function fail(msg) {
+          if (n < 2) setTimeout(go, 2000 * n); else next(idx + 1, msg);
+        }
+        x.send();
+      })();
+    })(0, '');
   }
 
   /* normalizza un item della ricerca/playlist di yt-dlp (-J --flat-playlist) */
@@ -989,21 +538,26 @@
   }
 
   function ytdlpSearch(q, ok, err) {
+    var key = 'ytd.srch.' + q;
+    var cached = cacheGet(key, SRCH_CACHE_TTL);
+    if (cached) { ok(cached); return; }
     ytdlpRun('ytsearch8:' + q + ' -J --flat-playlist', function (obj) {
-      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
       var entries = (obj && obj.entries) || [];
       var out = [];
       for (var i = 0; i < entries.length; i++) {
         var it = ytdlpItem(entries[i]);
         if (it.id) out.push(it);
       }
+      cacheSet(key, out);
       ok(out);
-    }, err, 3);
+    }, err);
   }
 
   function ytdlpFormats(id, ok, err) {
+    var key = 'ytd.fmt.' + id;
+    var cached = cacheGet(key, FMT_CACHE_TTL);
+    if (cached) { ok(cached); return; }
     ytdlpRun('https://youtu.be/' + id + ' -J --no-playlist', function (obj) {
-      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
       var audio = [], progressive = [], video = [];
       var fmts = (obj && obj.formats) || [];
       for (var i = 0; i < fmts.length; i++) {
@@ -1035,7 +589,7 @@
       audio.sort(byKbps);
       progressive.sort(byHeight);
       video.sort(byHeight);
-      ok({
+      var data = {
         info: {
           id: id,
           title: obj.title || '',
@@ -1044,24 +598,30 @@
           thumb: ((obj.thumbnails && obj.thumbnails.length) ? obj.thumbnails[obj.thumbnails.length - 1].url : '') || thumbFor(id)
         },
         audio: audio, progressive: progressive, video: video
-      });
-    }, err, 3);
+      };
+      cacheSet(key, data);
+      ok(data);
+    }, err);
   }
 
   function ytdlpPlaylist(list, ok, err) {
+    var key = 'ytd.pl.' + list;
+    var cached = cacheGet(key, SRCH_CACHE_TTL);
+    if (cached) { ok(cached); return; }
     ytdlpRun('https://www.youtube.com/playlist?list=' + list + ' -J --flat-playlist', function (obj) {
-      if (obj.ytdlpLimit) { err(t('ytdlp-limit')); return; }
       var entries = (obj && obj.entries) || [];
       var out = [];
       for (var i = 0; i < entries.length; i++) {
         var it = ytdlpItem(entries[i]);
         if (it.id) out.push(it);
       }
-      ok({ name: (obj && obj.title) || '', items: out });
-    }, err, 3);
+      var data = { name: (obj && obj.title) || '', items: out };
+      cacheSet(key, data);
+      ok(data);
+    }, err);
   }
 
-  /* scarica i byte di uno stream (URL diretto Piped/Invidious, CORS permissivo) */
+  /* scarica i byte di uno stream (URL con CORS permissivo) */
   function xhrBlobUrl(url, ok, err, onProgress) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
@@ -1077,16 +637,14 @@
     x.send();
   }
 
-  function renderPipedStatus() {
-    var el = $('piped-status');
+  function renderEngineStatus() {
+    var el = $('engine-status');
     if (!el) return;
-    if (pipedBase) {
-      var host = pipedBase.replace(/^https?:\/\//, '').split('/')[0];
-      var extra = ' \u00B7 +ytdlp';
-      if (invidBase && invidBase !== pipedBase) extra += ' \u00B7 +Invidious';
-      el.textContent = t('piped-label') + ' \u00B7 ' + host + extra;
+    if (proxyGood) {
+      var host = proxyGood.replace(/^https?:\/\//, '').split('/')[0];
+      el.textContent = t('ytdlp-label') + ' \u00B7 ' + host;
     } else {
-      el.textContent = t('piped-checking');
+      el.textContent = t('ytdlp-checking');
     }
   }
 
@@ -1306,7 +864,7 @@
     });
   }
 
-  /* avvia il download di un singolo formato (URL diretto Piped); mostra una
+  /* avvia il download di un singolo formato; mostra una
      barra di progresso nel container (il pulsante del picker viene rimosso
      dal DOM quando il picker si chiude, quindi la % sul pulsante non
      sarebbe visibile). */
@@ -1344,29 +902,6 @@
       .replace(/^\s+|\s+$/g, '')
       .slice(0, 90);
     return t || 'audio';
-  }
-
-  function shouldRetry(msg) {
-    return /bot|sign in|blocked|bloccato|blocco|rifiutato|403|429|500|502|503|network error|errore di rete|invalid response/i.test(String(msg));
-  }
-
-  /* esegue exec(ok, err) con retry aggressivo e backoff esponenziale:
-     l'anti-bot di YouTube e' intermittente, un nuovo tentativo ha buona
-     probabilita' di passare (visitorData fresco, altra istanza del worker). */
-  function retryCall(exec, onOk, onErr, maxAttempts, delayMs) {
-    var attempts = 0;
-    (function go() {
-      attempts++;
-      exec(function (val) { onOk(val); },
-        function (msg) {
-          /* "bloccato, riprova tra Ns": non consumare tentativi con attese
-             corte inutili; il chiamante (auto-retry) aspetta l'attesa giusta */
-          if (retrySeconds(msg)) { onErr(msg); return; }
-          if (attempts < maxAttempts && shouldRetry(msg)) {
-            setTimeout(go, Math.min(delayMs * Math.pow(2, attempts - 1), 20000));
-          } else { onErr(msg); }
-        });
-    })();
   }
 
   /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
@@ -2008,17 +1543,10 @@
 
   /* hook minimo per test/debug */
   window.__ytdAutoUpdate = { checkVersion: checkVersion, busy: anyDownloadBusy, version: YTD_VER };
-  window.__ytdPiped = {
-    base: function () { return pipedBase; },
-    refresh: function (cb) { pipedRefresh(true, cb); },
-    pool: PIPED_POOL,
-    extractUrls: function (body) { return pipedUrlsFrom(body); },
-    lists: function (cb) { pipedFetchLists(cb); }
-  };
-  window.__ytdInvid = {
-    base: function () { return invidBase; },
-    refresh: function (force, cb) { invidRefresh(force, cb); },
-    pool: INVID_POOL
+  window.__ytdEngine = {
+    base: function () { return proxyGood; },
+    refresh: function (cb) { proxyRefresh(true, cb); },
+    pool: YTDLP_PROXIES
   };
 
   /* ---------- init ---------- */
@@ -2029,13 +1557,9 @@
     bindTabs();
     bindSelTray();
     renderVersion();
-    /* discovery delle istanze Piped pubbliche (health check sul pool) */
-    window.__ytdOnPiped = function (u) { pipedBase = u; renderPipedStatus(); };
-    pipedRefresh(false, function () { renderPipedStatus(); });
-    setInterval(function () { pipedRefresh(false, function () { renderPipedStatus(); }); }, PIPED_TTL);
-    /* discovery dell'eventuale istanza Invidious di riserva (best-effort) */
-    invidRefresh(false, function () { renderPipedStatus(); });
-    setInterval(function () { invidRefresh(false, function () { renderPipedStatus(); }); }, PIPED_TTL);
+    /* discovery dei proxy CORS (health check sul pool, ognuno quota separata) */
+    proxyRefresh(false, function () { renderEngineStatus(); });
+    setInterval(function () { proxyRefresh(false, function () { renderEngineStatus(); }); }, PROXY_TTL);
     setTimeout(checkVersion, 4000);
     setInterval(checkVersion, 60000);
 
