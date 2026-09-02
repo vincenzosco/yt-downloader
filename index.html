@@ -5,10 +5,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title data-i18n="title">ytd. — YouTube downloader</title>
-<meta name="description" content="Search a song on YouTube or paste a link (video or playlist): preview title & cover, download audio.">
+<meta name="description" content="Paste a YouTube link (video or playlist): preview title & cover, download audio/video with yt-dlp.">
 <link rel="icon" href="data:,">
-<script>window.YTD_VERSION = "09987a8";</script>
-<link rel="stylesheet" href="style.css?v=09987a8">
+<script>window.YTD_VERSION = "081ee6c";</script>
+<link rel="stylesheet" href="style.css?v=081ee6c">
 </head>
 <body>
 
@@ -16,27 +16,13 @@
   <div class="wrap">
     <button type="button" class="lang-toggle" id="lang-toggle" aria-label="Switch language">EN</button>
     <h1 class="wordmark">ytd<span class="dot">.</span></h1>
-    <p class="tagline" data-i18n="tagline">YouTube downloader — search a song or paste a link</p>
+    <p class="tagline" data-i18n="tagline">YouTube downloader — paste a link (video or playlist)</p>
   </div>
 </header>
 
 <main class="wrap">
 
-  <nav class="tabs" role="tablist">
-    <button type="button" class="tab is-active" data-tab="search" role="tab" data-i18n="tab-search">Search</button>
-    <button type="button" class="tab" data-tab="link" role="tab" data-i18n="tab-link">Paste link</button>
-  </nav>
-
-  <section id="panel-search" class="panel">
-    <form id="search-form" class="form" autocomplete="off">
-      <input id="search-input" type="text" data-i18n-placeholder="placeholder-search" aria-label="Search YouTube">
-      <button type="submit" class="btn btn-primary" data-i18n="btn-search">Search</button>
-    </form>
-    <p class="status" id="search-status" hidden></p>
-    <ol class="results" id="search-results"></ol>
-  </section>
-
-  <section id="panel-link" class="panel" hidden>
+  <section id="panel-link" class="panel">
     <form id="link-form" class="form" autocomplete="off">
       <input id="link-input" type="text" data-i18n-placeholder="placeholder-link" aria-label="YouTube link">
       <button type="submit" class="btn btn-primary" data-i18n="btn-preview">Preview</button>
@@ -75,6 +61,6 @@
   </div>
 </footer>
 
-<script src="app.js?v=09987a8"></script>
+<script src="app.js?v=081ee6c"></script>
 </body>
 </html>

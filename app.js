@@ -16,11 +16,7 @@
   var LANGS = {
     it: {
       'title': 'ytd. — download audio da YouTube',
-      'tagline': 'download audio da youtube — cerca una canzone oppure incolla un link',
-      'tab-search': 'Cerca',
-      'tab-link': 'Incolla link',
-      'placeholder-search': 'artista o titolo…',
-      'btn-search': 'Cerca',
+      'tagline': 'download audio da youtube — incolla un link',
       'placeholder-link': 'https://www.youtube.com/watch?v=… o playlist…',
       'btn-preview': 'Anteprima',
       'noscript': 'Questa pagina richiede JavaScript (dalla versione 2015 in poi va bene).',
@@ -29,9 +25,6 @@
       'ytdlp-checking': 'verifico i server yt-dlp…',
       'ytdlp-none': 'Nessun server yt-dlp raggiungibile in questo momento. Riprova tra poco.',
       'ytdlp-label': 'yt-dlp (ytdlp.online)',
-      'searching': 'cerco…',
-      'no-results': 'nessun risultato per \u201c{0}\u201d',
-      'search-err': 'ricerca: {0}',
       'formats-err': 'formati: {0}',
       'download-err': 'Download: {0}',
       'widget-open': '🎯 scarica con widget ytdown.tools',
@@ -86,11 +79,7 @@
     },
     en: {
       'title': 'ytd. — YouTube downloader',
-      'tagline': 'YouTube downloader — search a song or paste a link',
-      'tab-search': 'Search',
-      'tab-link': 'Paste link',
-      'placeholder-search': 'artist or title…',
-      'btn-search': 'Search',
+      'tagline': 'YouTube downloader — paste a link',
       'placeholder-link': 'https://www.youtube.com/watch?v=… or playlist…',
       'btn-preview': 'Preview',
       'noscript': 'This page requires JavaScript (ES5, works in any browser from ~2015).',
@@ -99,9 +88,6 @@
       'ytdlp-checking': 'checking yt-dlp servers…',
       'ytdlp-none': 'No yt-dlp server reachable right now. Try again soon.',
       'ytdlp-label': 'yt-dlp (ytdlp.online)',
-      'searching': 'searching…',
-      'no-results': 'no results for \u201c{0}\u201d',
-      'search-err': 'search: {0}',
       'formats-err': 'formats: {0}',
       'download-err': 'Download: {0}',
       'widget-open': '🎯 download with ytdown.tools widget',
@@ -414,7 +400,6 @@
 
   /* ---------- dispatch: unico engine YTDLP ---------- */
 
-  function ytSearch(q, ok, err) { ytdlpSearch(q, ok, err); }
   function ytFormats(id, ok, err) { ytdlpFormats(id, ok, err); }
   function ytPlaylist(list, ok, err) { ytdlpPlaylist(list, ok, err); }
 
@@ -578,22 +563,6 @@
     };
   }
 
-  function ytdlpSearch(q, ok, err) {
-    var key = 'ytd.srch.' + q;
-    var cached = cacheGet(key, SRCH_CACHE_TTL);
-    if (cached) { ok(cached); return; }
-    ytdlpRun('ytsearch8:' + q + ' -J --flat-playlist', function (obj) {
-      var entries = (obj && obj.entries) || [];
-      var out = [];
-      for (var i = 0; i < entries.length; i++) {
-        var it = ytdlpItem(entries[i]);
-        if (it.id) out.push(it);
-      }
-      cacheSet(key, out);
-      ok(out);
-    }, err);
-  }
-
   function ytdlpFormats(id, ok, err) {
     var key = 'ytd.fmt.' + id;
     var cached = cacheGet(key, FMT_CACHE_TTL);
@@ -701,23 +670,6 @@
   function clearStatus(panelId) {
     var el = $(panelId);
     if (el) { el.hidden = true; el.innerHTML = ''; removeClass(el, 'is-error'); }
-  }
-
-  /* ---------- tabs ---------- */
-
-  function bindTabs() {
-    var tabs = document.querySelectorAll('.tab');
-    for (var i = 0; i < tabs.length; i++) {
-      (function (tab) {
-        tab.addEventListener('click', function () {
-          for (var j = 0; j < tabs.length; j++) removeClass(tabs[j], 'is-active');
-          addClass(tab, 'is-active');
-          var name = tab.getAttribute('data-tab');
-          $('panel-search').hidden = (name !== 'search');
-          $('panel-link').hidden = (name !== 'link');
-        });
-      })(tabs[i]);
-    }
   }
 
   /* ---------- risultati: riga ---------- */
@@ -1307,22 +1259,6 @@
     renderSel();
   }
 
-  /* ---------- ricerca ---------- */
-
-  function doSearch(q) {
-    clearStatus('search-status');
-    var list = $('search-results');
-    list.innerHTML = '';
-    setStatus('search-status', t('searching'));
-    ytSearch(q,
-      function (results) {
-        clearStatus('search-status');
-        if (!results.length) { setStatus('search-status', tF('no-results', q), true); return; }
-        for (var i = 0; i < results.length; i++) list.appendChild(buildRow(results[i], 'search-status'));
-      },
-      function (msg) { setStatus('search-status', tF('search-err', friendlyMsg(pipedErrMsg(msg))), true); });
-  }
-
   /* ---------- link incollato ---------- */
 
   /* Anteprima zero-server: l'oembed di YouTube ha il CORS aperto
@@ -1665,7 +1601,6 @@
     base: function () { return proxyGood; },
     refresh: function (cb) { proxyRefresh(true, cb); },
     pool: YTDLP_PROXIES,
-    setSearch: function (fn) { ytSearch = fn; },
     setFormats: function (fn) { ytFormats = fn; },
     setPlaylist: function (fn) { ytPlaylist = fn; },
     direct: function (u) { startDirectUrl(u); },
@@ -1677,7 +1612,6 @@
   function init() {
     bindLang();
     applyLang();
-    bindTabs();
     bindSelTray();
     renderVersion();
     /* discovery dei proxy CORS (health check sul pool, ognuno quota separata) */
@@ -1686,11 +1620,6 @@
     setTimeout(checkVersion, 4000);
     setInterval(checkVersion, 60000);
 
-    $('search-form').addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      var q = $('search-input').value.replace(/^\s+|\s+$/g, '');
-      if (q) doSearch(q);
-    });
     $('link-form').addEventListener('submit', function (ev) {
       ev.preventDefault();
       doLink($('link-input').value);

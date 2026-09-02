@@ -1,8 +1,8 @@
 # ytd.
 
 YouTube downloader — minimale, su GitHub Pages, **senza alcun server dietro**.
-Cerca una canzone o incolla un link (video o playlist): anteprima titolo e
-copertina, download audio/video con scelta di qualità.
+Incolla un link (video o playlist): anteprima titolo e copertina, download
+audio/video con scelta di qualità.
 
 Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
@@ -10,20 +10,18 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 ## Funzioni
 
-- **Cerca** — risultati con copertina, titolo, autore, durata, visualizzazioni
-  e anteprima audio (▶).
-- **Incolla link** — video o playlist: card con titolo e copertina, elenco tracce.
+- **Incolla link** — video o playlist: card con titolo e copertina **subito**
+  (da oembed, zero server), elenco tracce per le playlist.
 - **Selettore qualità** — su ogni pulsante “Scarica”: scegli formato e qualità
   (Audio se disponibile, Video con audio, Video solo video). Ogni opzione
   mostra la dimensione stimata.
 - **Playlist: “Scarica tutte”** — scarica a catena tutte le tracce.
-- **Selezione multipla → .zip** — spunta le canzoni con le checkbox (da una o
-  più ricerche, la selezione resta mentre cerchi altro) e scarica tutto in un
-  unico `ytd-AAAA-MM-GG.zip`: download in sequenza con progress, nomi file dal
-  titolo con estensione giusta, le canzoni che falliscono non bloccano il lotto.
-  Con gli stream protetti da YouTube (niente CORS) i file vengono scaricati
-  singolarmente in sequenza, con un messaggio chiaro (i byte non possono
-  entrare nello zip).
+- **Selezione multipla → .zip** — spunta le tracce di una playlist con le
+  checkbox e scarica tutto in un unico `ytd-AAAA-MM-GG.zip`: download in
+  sequenza con progress, nomi file dal titolo con estensione giusta, le tracce
+  che falliscono non bloccano il lotto. Con gli stream protetti da YouTube
+  (niente CORS) i file vengono scaricati singolarmente in sequenza, con un
+  messaggio chiaro (i byte non possono entrare nello zip).
 - **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
 - **Barre di progresso** — ogni download (singolo, “Scarica tutte” e batch
   .zip) mostra una barra che avanza con i byte ricevuti.
@@ -79,7 +77,6 @@ pagina gestisce da sola tutta la resilienza:
 - **Cache locale dei formati**: una volta estratti i formati di un video
   (valgono 6 ore), i **download ripetuti non consumano più task** — la cache
   rende i re-download istantanei;
-- **Cache della ricerca** (10 minuti): ricerche ripetute non consumano task;
 - **Retry aggressivo**: se tutti i proxy falliscono, la pagina riprova un
   altro giro con attese crescenti prima di arrendersi, e mostra un messaggio
   chiaro (il limite di ytdlp.online si resetta da solo).
@@ -161,8 +158,8 @@ MIT
 # ytd.
 
 A minimal YouTube downloader, hosted on GitHub Pages, **with no server
-behind it at all**. Search a song or paste a link (video or playlist):
-preview title & cover, download audio/video with quality choice.
+behind it at all**. Paste a link (video or playlist): preview title & cover,
+download audio/video with quality choice.
 
 Published at [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.io/yt-downloader).
 
@@ -170,20 +167,18 @@ The page UI is bilingual (IT/EN toggle, top right).
 
 ## Features
 
-- **Search** — results with thumbnail, title, author, duration, views and
-  audio preview (▶).
-- **Paste link** — video or playlist: card with title & cover, track list.
+- **Paste link** — video or playlist: card with title & cover **instantly**
+  (from oembed, zero server), track list for playlists.
 - **Quality picker** — every “Download” button lets you choose format/quality
   (Audio when available, Video with audio, Video only). Estimated size shown
   on every option.
 - **Playlist “Download all”** — downloads every track in sequence.
-- **Multi-select → .zip** — tick songs with the checkboxes (from one or more
-  searches — the selection stays while you search more) and download them all
-  as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
-  filenames from the title with the right extension, failed songs don't stop
-  the batch. With YouTube-protected streams (no CORS) the files are
-  downloaded individually in sequence, with a clear message (their bytes
-  can't go into the zip).
+- **Multi-select → .zip** — tick tracks of a playlist with the checkboxes and
+  download them all as a single `ytd-YYYY-MM-DD.zip`: sequential downloads
+  with progress, filenames from the title with the right extension, failed
+  tracks don't stop the batch. With YouTube-protected streams (no CORS) the
+  files are downloaded individually in sequence, with a clear message (their
+  bytes can't go into the zip).
 - **IT/EN language** — toggle at the top right (choice is remembered).
 - **Progress bars** — every download (single, “Download all” and the .zip
   batch) shows a bar advancing with the received bytes.
@@ -237,7 +232,6 @@ resilience by itself:
 - **Local formats cache**: once a video's formats are extracted (valid 6
   hours), **repeated downloads consume zero tasks** — re-downloads are
   instant;
-- **Search cache** (10 minutes): repeated searches consume zero tasks;
 - **Aggressive retry**: if all proxies fail, the page tries a second full
   round with increasing waits before giving up, and shows a clear message
   (ytdlp.online's counter resets on its own).
