@@ -1,4 +1,4 @@
-/* ytd. — logica pagina (ES5: niente fetch, arrow o template literal, gira sui browser datati) */
+/* ytd. — logica pagina (ES5 con fetch quando disponibile, fallback XHR) */
 (function () {
   'use strict';
 
@@ -7,7 +7,9 @@
      pubblici. Ogni proxy ha un IP diverso -> quota giornaliera separata
      (~5 task/IP): la pagina li verifica (health check), ruota in automatico
      e salva in localStorage i formati già estratti, così i download ripetuti
-     non consumano più task. */
+     non consumano più task. L'anteprima (titolo/copertina) arriva da oembed
+     di YouTube con CORS aperto (zero server); i download "direct" (URL
+     googlevideo senza CORS) si aprono nel download manager del browser. */
 
   /* ---------- lingua ---------- */
 
@@ -77,6 +79,8 @@
       'zip-err': 'zip: {0}',
       'zip-unavailable': 'stream non disponibile',
       'zip-some-failed': ' ({0} non riuscite)',
+      'zip-direct': ' · {0} scaricati singolarmente (stream protetti, niente CORS)',
+      'zip-only-direct': 'Stream protetti (niente CORS): impossibile creare lo .zip — {0} file scaricati singolarmente nel download manager.',
       'up-available': 'Nuova versione disponibile (v{0}).',
       'up-reload': 'Ricarica'
     },
@@ -145,6 +149,8 @@
       'zip-err': 'zip: {0}',
       'zip-unavailable': 'stream unavailable',
       'zip-some-failed': ' ({0} failed)',
+      'zip-direct': ' · {0} downloaded individually (protected streams, no CORS)',
+      'zip-only-direct': 'Protected streams (no CORS): zip impossible — {0} files downloaded individually.',
       'up-available': 'New version available (v{0}).',
       'up-reload': 'Reload'
     }
@@ -940,7 +946,7 @@
   }
 
   /* Download audio (usato da "Scarica tutte"): itag opzionale, ext = estensione */
-  function fetchAudio(item, itag, ext, onProgress, onDone, onErr) {
+  function fetchAudio(item, itag, ext, onProgress, onDone, onErr, onDirect) {
     var title = item.title || item.id;
     ytFormats(item.id,
       function (fmts) {
@@ -951,6 +957,12 @@
         }
         if (!fmt) fmt = pickStream(fmts);
         if (!fmt) { onErr(t('zip-unavailable')); return; }
+        /* stream googlevideo: niente CORS, i byte non sono leggibili dal
+           browser — si apre la navigazione diretta (download manager) */
+        if (fmt.direct) {
+          if (onDirect) onDirect(fmt.url); else onErr(t('zip-unavailable'));
+          return;
+        }
         var e = ext || extForMime(fmt.mime || '');
         xhrBlobUrl(fmt.url,
           function (blob) { onDone(blob, sanitizeTitle(title) + '.' + e); },
@@ -958,6 +970,23 @@
           onProgress);
       },
       function (msg) { onErr(friendlyMsg(pipedErrMsg(msg))); });
+  }
+
+  /* apre un download "direct" (URL googlevideo, niente CORS): navigazione
+     su un anchor con target=_blank — non è un popup, il browser non lo
+     blocca e il file finisce nel download manager. Usato per i download in
+     sequenza (playlist, selezione multipla) dove i byte non si possono
+     leggere via XHR (CORS). */
+  function startDirectUrl(url) {
+    if (window.__ytdDirectLog) window.__ytdDirectLog.push(url);
+    var a = document.createElement('a');
+    a.href = url;
+    a.setAttribute('target', '_blank');
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 500);
   }
 
   function saveBlob(blob, name, statusId) {
@@ -1186,11 +1215,17 @@
 
   /* scarica una canzone come bytes per lo zip: miglior stream disponibile
      (audio-only se c'è, altrimenti muxed), estensione dal Content-Type. */
-  function fetchZipItem(item, ok, err, onProgress) {
+  function fetchZipItem(item, ok, err, onProgress, onDirect) {
     ytFormats(item.id,
       function (fmts) {
         var fmt = pickStream(fmts);
         if (!fmt) { err(t('zip-unavailable')); return; }
+        /* stream protetto (googlevideo, niente CORS): i byte non arrivano al
+           browser, si scarica con la navigazione diretta */
+        if (fmt.direct) {
+          if (onDirect) onDirect(fmt.url); else err(t('zip-unavailable'));
+          return;
+        }
         xhrBlobUrl(fmt.url,
           function (blob) {
             blobBytes(blob, function (bytes) {
@@ -1214,6 +1249,8 @@
     var items = selOrder.map(function (id) { return selMap[id]; });
     var failures = 0;
     var lastMsg = null;
+    var directCount = 0;   /* stream protetti: scaricati singolarmente */
+    var zipHas = 0;        /* track entrate davvero nello zip */
     var zip = new ZipBuilder();
     var i = 0;
     var barWrap = $('sel-progress');
@@ -1223,12 +1260,19 @@
     (function next() {
       if (i >= items.length) {
         var done = items.length - failures;
-        if (done) {
+        if (zipHas) {
           setBar(barEl, 1);
           var zipName = 'ytd-' + new Date().toISOString().slice(0, 10) + '.zip';
           saveBlob(zip.build(), zipName, null);
-          setSelStatus(tF('zip-done', done) + (failures ? tF('zip-some-failed', failures) : ''));
-          setTimeout(function () { if (barWrap) barWrap.hidden = true; setBar(barEl, 0); }, 1500);
+          setSelStatus(tF('zip-done', zipHas) + (directCount ? tF('zip-direct', directCount) : '') + (failures ? tF('zip-some-failed', failures) : ''));
+          setTimeout(function () { if (barWrap) barWrap.hidden = true; setBar(barEl, 0); }, 2500);
+        } else if (directCount === done && done > 0) {
+          /* tutto protetto (googlevideo): niente zip possibile, i file sono
+             già stati scaricati singolarmente dal click degli anchor */
+          if (barWrap) barWrap.hidden = true;
+          setBar(barEl, 0);
+          setSelStatus(tF('zip-only-direct', directCount));
+          setTimeout(function () { setSelStatus(''); }, 8000);
         } else {
           if (barWrap) barWrap.hidden = true;
           setBar(barEl, 0);
@@ -1246,11 +1290,12 @@
       setSelStatus(tF('zip-progress', i + 1, items.length, item.title));
       setBar(barEl, i / items.length);
       fetchZipItem(item,
-        function (name, bytes) { zip.add(name, bytes); i++; next(); },
+        function (name, bytes) { zip.add(name, bytes); zipHas++; i++; next(); },
         function (msg) { lastMsg = msg; failures++; i++; next(); },
         function (loaded, total) {
           if (total) setBar(barEl, (i + loaded / total) / items.length);
-        });
+        },
+        function (u) { directCount++; startDirectUrl(u); setTimeout(function () { i++; next(); }, 450); });
     })();
   }
 
@@ -1279,6 +1324,32 @@
   }
 
   /* ---------- link incollato ---------- */
+
+  /* Anteprima zero-server: l'oembed di YouTube ha il CORS aperto
+     (verificato), quindi titolo/autore/copertina arrivano SUBITO, senza
+     proxy né engine (i formati veri li porta ytFormats, se serve). */
+  function oembedLookup(vid, ok) {
+    var url = 'https://www.youtube.com/oembed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + vid) + '&format=json';
+    var handle = function (j) {
+      ok(j ? { title: j.title || '', author: j.author_name || '', thumb: j.thumbnail_url || '' } : null);
+    };
+    if (window.fetch) {
+      fetch(url).then(function (r) { return r.json(); }).then(handle).catch(function () { ok(null); });
+      return;
+    }
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.timeout = 10000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (x.status >= 200 && x.status < 300) {
+        try { handle(JSON.parse(x.responseText)); } catch (e) { ok(null); }
+      } else ok(null);
+    };
+    x.onerror = function () { ok(null); };
+    x.ontimeout = function () { ok(null); };
+    x.send();
+  }
 
   function parseYtUrl(raw) {
     var u = String(raw || '').trim();
@@ -1343,6 +1414,17 @@
     var box = $('link-preview');
     var card = buildCard(thumbFor(vid), '\u2026', '\u2026', '', null);
     box.appendChild(card);
+    /* titolo/copertina subito da oembed (zero server, CORS aperto);
+       i formati veri li porta ytFormats qui sotto */
+    oembedLookup(vid, function (info) {
+      if (!info || !card.parentNode) return;
+      var tEl = card.querySelector('.card-title');
+      if (info.title && tEl && (tEl.textContent === '\u2026')) tEl.textContent = info.title;
+      var sEl = card.querySelector('.card-sub');
+      if (info.author && sEl && (sEl.textContent === '\u2026')) sEl.textContent = info.author;
+      var cEl = card.querySelector('.card-cover');
+      if (info.thumb && cEl && cEl.src.indexOf('hqdefault') !== -1) cEl.src = info.thumb;
+    });
     var actions = document.createElement('div');
     actions.className = 'card-actions';
     card.querySelector('.card-body').appendChild(actions);
@@ -1512,7 +1594,8 @@
         fetchAudio(item, itag, ext,
           function (loaded, total) { if (total) setBar(bar.el, (i + loaded / total) / items.length); },
           function (blob, name) { saveBlob(blob, name); i++; next(); },
-          function () { i++; next(); });
+          function () { i++; next(); },
+          function (u) { startDirectUrl(u); setTimeout(function () { i++; next(); }, 450); });
       })();
     });
   }
@@ -1581,7 +1664,12 @@
   window.__ytdEngine = {
     base: function () { return proxyGood; },
     refresh: function (cb) { proxyRefresh(true, cb); },
-    pool: YTDLP_PROXIES
+    pool: YTDLP_PROXIES,
+    setSearch: function (fn) { ytSearch = fn; },
+    setFormats: function (fn) { ytFormats = fn; },
+    setPlaylist: function (fn) { ytPlaylist = fn; },
+    direct: function (u) { startDirectUrl(u); },
+    oembed: function (vid, cb) { oembedLookup(vid, cb); }
   };
 
   /* ---------- init ---------- */

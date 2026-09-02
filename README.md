@@ -21,6 +21,9 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
   più ricerche, la selezione resta mentre cerchi altro) e scarica tutto in un
   unico `ytd-AAAA-MM-GG.zip`: download in sequenza con progress, nomi file dal
   titolo con estensione giusta, le canzoni che falliscono non bloccano il lotto.
+  Con gli stream protetti da YouTube (niente CORS) i file vengono scaricati
+  singolarmente in sequenza, con un messaggio chiaro (i byte non possono
+  entrare nello zip).
 - **Lingua IT/EN** — selettore in alto a destra (ricorda la scelta).
 - **Barre di progresso** — ogni download (singolo, “Scarica tutte” e batch
   .zip) mostra una barra che avanza con i byte ricevuti.
@@ -31,7 +34,20 @@ Pubblicato su [vincenzosco.github.io/yt-downloader](https://vincenzosco.github.i
 
 La pagina è **statica al 100%** (GitHub Pages) e parla **dal browser** con
 **ytdlp.online** (yt-dlp server-side, gratis e senza account). Non c'è un tuo
-server, non serve configurare nulla:
+server, non serve configurare nulla.
+
+**Che libreria usa ytdlp.online?** È una web UI che esegue **yt-dlp** (e in
+parte youtube-dl): un CLI **Python** che gira sul loro server. Python non può
+girare in un browser, quindi non esiste un port "puro" della libreria per la
+pagina — il browser può solo parlarci via API (attraverso i proxy, qui sotto).
+Ho verificato le alternative client-side: **youtubei.js** (il port JS di
+yt-dlp) è bloccato da YouTube nel browser (niente CORS, testato dal vivo su
+tutti i client) e le istanze **Invidious/Piped** pubbliche sono per lo più giù
+(401/403/503, testate). Resta quindi il flusso qui sotto.
+
+**Anteprima zero-server**: titolo, autore e copertina arrivano **subito** da
+**oembed** di YouTube direttamente (CORS aperto, verificato): niente proxy,
+niente engine, niente quota consumata per la preview.
 
 ```
 browser (pagina statica su GitHub Pages)
@@ -85,8 +101,12 @@ Limiti reali, verificati:
 - **~5 task/giorno per IP** su ytdlp.online: quando si esaurisce la pagina
   mostra un messaggio chiaro e passa ai proxy successivi; quando tutti sono a
   quota chiede di riprovare (il contatore si resetta da solo).
-- I formati hanno **URL googlevideo senza CORS**: il download si apre in una
-  scheda (il browser lo scarica comunque, senza barra di progresso).
+- I formati hanno **URL googlevideo senza CORS**: i byte non sono leggibili
+  dal browser, quindi il download apre l'URL — singolo: nuova scheda;
+  playlist "Scarica tutte" e selezione multipla: download in **sequenza** nel
+  download manager del browser, uno dopo l'altro. Lo **.zip multi-selezione
+  funziona quando gli stream sono leggibili**; per gli stream protetti la
+  pagina scarica i file singolarmente con un messaggio chiaro.
 - **Widget ytdown.tools (bestapi.cc)**: nel pannello “Incolla link”, per un
   video c'è il pulsante **🎯 scarica con widget ytdown.tools** che apre in un
   iframe il widget di bestapi.cc (`frame-ancestors *`, verificato nel
@@ -99,9 +119,9 @@ Limiti reali, verificati:
 
 ## Sviluppo
 
-- `index.html`, `style.css`, `app.js` — pagina statica, JavaScript **ES5**
-  volutamente senza framework né build: gira anche su browser datati
-  (Firefox 44+, Chrome/Edge 49+, Safari 9+).
+- `index.html`, `style.css`, `app.js` — pagina statica, senza framework né
+  build. Codice ES5 con `fetch` quando disponibile (fallback XHR):
+  raccomandati browser moderni; gran parte funziona anche su browser datati.
 - Il pool di proxy è `YTDLP_PROXIES` in `app.js` (in cima): aggiungi un proxy
   CORS pubblico come voce dell'array; il health check lo valuta da solo.
 - Nessuna dipendenza, nessun account, nessun deploy: basta pushare su GitHub
@@ -122,11 +142,8 @@ bash tools/bump.sh
 - I proxy CORS pubblici possono cambiare/bloccarsi: è il costo di non avere un
   server. Se un proxy muore, aggiungine un altro a `YTDLP_PROXIES` e la
   pagina lo userà da sola.
-- **Browser datati**: la pagina è JavaScript ES5 puro (niente `let`/arrow/fetch,
-  niente build) e usa `<audio>` per l'anteprima: funziona da circa il 2015 in
-  su (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 con
-  `<audio>`). Il selettore qualità usa `<select>`+`optgroup`, supportato da
-  sempre. Niente WebAssembly richiesto.
+- **Browser**: raccomandati browser moderni (l'oembed usa `fetch`, con
+  fallback XHR). Niente WebAssembly, niente build.
 
 ## License
 
@@ -160,7 +177,9 @@ The page UI is bilingual (IT/EN toggle, top right).
   searches — the selection stays while you search more) and download them all
   as a single `ytd-YYYY-MM-DD.zip`: sequential downloads with progress,
   filenames from the title with the right extension, failed songs don't stop
-  the batch.
+  the batch. With YouTube-protected streams (no CORS) the files are
+  downloaded individually in sequence, with a clear message (their bytes
+  can't go into the zip).
 - **IT/EN language** — toggle at the top right (choice is remembered).
 - **Progress bars** — every download (single, “Download all” and the .zip
   batch) shows a bar advancing with the received bytes.
@@ -171,7 +190,20 @@ The page UI is bilingual (IT/EN toggle, top right).
 
 The page is **100% static** (GitHub Pages) and talks **from the browser** to
 **ytdlp.online** (yt-dlp server-side, free and no account). There is no server
-of yours, nothing to configure:
+of yours, nothing to configure.
+
+**What library does ytdlp.online use?** It is a web UI that runs **yt-dlp**
+(and partly youtube-dl): a **Python** CLI that runs on their server. Python
+cannot run in a browser, so there is no "pure" port of the library for the
+page — the browser can only talk to it via API (through the proxies below). I
+checked the client-side alternatives: **youtubei.js** (yt-dlp's JS port) is
+blocked by YouTube in the browser (no CORS, tested live on every client) and
+public **Invidious/Piped** instances are mostly down (401/403/503, tested).
+So the flow below is what remains.
+
+**Zero-server preview**: title, author and cover arrive **instantly** from
+**oembed** (YouTube, CORS open — verified): no proxy, no engine, no quota
+spent on the preview.
 
 ```
 browser (static page on GitHub Pages)
@@ -226,8 +258,12 @@ Real, verified limits:
 - **~5 tasks/day per IP** on ytdlp.online: when exhausted, the page shows a
   clear message and moves to the next proxy; when all are at quota it asks
   you to retry (the counter resets on its own).
-- The formats are **googlevideo URLs without CORS**: the download opens in a
-  tab (the browser still downloads it, just without a progress bar).
+- The formats are **googlevideo URLs without CORS**: the bytes can't be read
+  by the browser, so the download opens the URL — single: new tab; playlist
+  "Download all" and multi-select: downloads in **sequence** into the
+  browser's download manager, one after another. The **.zip multi-select
+  works when streams are readable**; for YouTube-protected streams the page
+  downloads the files individually with a clear message.
 - **ytdown.tools widget (bestapi.cc)**: in the “Paste link” panel, for a
   video there is a **🎯 download with ytdown.tools widget** button that
   opens the bestapi.cc widget in an iframe (`frame-ancestors *`, verified
@@ -239,9 +275,9 @@ Real, verified limits:
 
 ## Development
 
-- `index.html`, `style.css`, `app.js` — static page, plain **ES5** JavaScript
-  (no framework, no build): works on old browsers too (Firefox 44+,
-  Chrome/Edge 49+, Safari 9+).
+- `index.html`, `style.css`, `app.js` — static page, no framework, no
+  build. ES5 code with `fetch` when available (XHR fallback): modern
+  browsers recommended; most of it also works on old ones.
 - The proxy pool is `YTDLP_PROXIES` in `app.js` (at the top): add a public
   CORS proxy as an array entry; the health check evaluates it on its own.
 - No dependencies, no account, no deploy: just push to GitHub Pages.
@@ -261,11 +297,8 @@ bash tools/bump.sh
 - Public CORS proxies can change/be blocked: that's the price of having no
   server. If a proxy dies, add another to `YTDLP_PROXIES` and the page will
   use it on its own.
-- **Older browsers**: the page is plain ES5 JavaScript (no `let`/arrow/fetch,
-  no build) and uses `<audio>` for preview: works roughly from 2015 onwards
-  (Chrome/Edge 49+, Firefox 44+, Safari 9+, Internet Explorer 11 with
-  `<audio>`). The quality picker uses `<select>`+`optgroup`, supported
-  everywhere. No WebAssembly required.
+- **Browsers**: modern browsers recommended (oembed uses `fetch`, with XHR
+  fallback). No WebAssembly, no build.
 
 ## License
 
