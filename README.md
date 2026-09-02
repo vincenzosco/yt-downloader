@@ -41,9 +41,13 @@ parte youtube-dl): un CLI **Python** che gira sul loro server. Python non può
 girare in un browser, quindi non esiste un port "puro" della libreria per la
 pagina — il browser può solo parlarci via API (attraverso i proxy, qui sotto).
 Ho verificato le alternative client-side: **youtubei.js** (il port JS di
-yt-dlp) è bloccato da YouTube nel browser (niente CORS, testato dal vivo su
-tutti i client) e le istanze **Invidious/Piped** pubbliche sono per lo più giù
-(401/403/503, testate). Resta quindi il flusso qui sotto.
+yt-dlp) è bloccato da YouTube nel browser (niente CORS, testato dal vivo),
+le istanze **Invidious/Piped** pubbliche sono per lo più giù
+(401/403/503, testate) — e **anche dal server** (test in Node, dove il CORS
+non esiste) youtubei.js ottiene ricerca e playlist ma **niente URL reali
+degli stream**: YouTube li serve solo con l'attestazione anti-bot (PO
+token/BotGuard), che solo i server yt-dlp (come ytdlp.online) sanno
+produrre. Resta quindi il flusso qui sotto.
 
 **Anteprima zero-server**: titolo, autore e copertina arrivano **subito** da
 **oembed** di YouTube direttamente (CORS aperto, verificato): niente proxy,
@@ -195,11 +199,13 @@ of yours, nothing to configure.
 **What library does ytdlp.online use?** It is a web UI that runs **yt-dlp**
 (and partly youtube-dl): a **Python** CLI that runs on their server. Python
 cannot run in a browser, so there is no "pure" port of the library for the
-page — the browser can only talk to it via API (through the proxies below). I
-checked the client-side alternatives: **youtubei.js** (yt-dlp's JS port) is
-blocked by YouTube in the browser (no CORS, tested live on every client) and
-public **Invidious/Piped** instances are mostly down (401/403/503, tested).
-So the flow below is what remains.
+page — the browser can only talk to it via API (through the proxies below).I checked the client-side alternatives: **youtubei.js** (yt-dlp's JS port) is
+blocked by YouTube in the browser (no CORS, tested live), public
+**Invidious/Piped** instances are mostly down (401/403/503, tested) — and
+**even from a server** (Node test, where CORS doesn't exist) youtubei.js
+gets search and playlists but **no real stream URLs**: YouTube only serves
+them with the anti-bot attestation (PO token/BotGuard), which only yt-dlp
+servers (like ytdlp.online) can produce. So the flow below is what remains.
 
 **Zero-server preview**: title, author and cover arrive **instantly** from
 **oembed** (YouTube, CORS open — verified): no proxy, no engine, no quota
